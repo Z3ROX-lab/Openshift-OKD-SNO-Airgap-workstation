@@ -1,0 +1,33 @@
+# OpenShift install artifacts (contain secrets)
+**/auth/
+**/*.ign
+**/agent.x86_64.iso
+**/openshift-install
+**/.openshift_install_state.json
+
+# Terraform
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+**/.terraform.lock.hcl
+**/terraform.tfvars
+
+# Secrets
+**/*.pem
+**/*.key
+**/*.crt
+**/*secret*
+**/*password*
+**/*token*
+
+# oc-mirror workspace
+**/oc-mirror-workspace/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

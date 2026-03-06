@@ -1,0 +1,128 @@
+# GitLab CI Pipeline — Secure Container Build
+# Kaniko (daemonless build) + Trivy + Grype + Syft + Checkov
+#
+# Designed to run on OKD SNO with GitLab Runner (Kubernetes executor)
+
+stages:
+  - lint
+  - scan-iac
+  - build
+  - scan-image
+  - sbom
+  - deploy
+
+variables:
+  IMAGE_NAME: "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+  MIRROR_REGISTRY: "mirror.sno.okd.lab:5000"
+
+# ─────────────────────────────────────────────
+# Stage 1 : IaC Scanning (Checkov)
+# ─────────────────────────────────────────────
+checkov-terraform:
+  stage: scan-iac
+  image: bridgecrew/checkov:latest
+  script:
+    - checkov -d terraform/ --framework terraform --output cli --soft-fail
+  artifacts:
+    when: always
+    paths:
+      - checkov-results.xml
+    reports:
+      junit: checkov-results.xml
+
+checkov-kubernetes:
+  stage: scan-iac
+  image: bridgecrew/checkov:latest
+  script:
+    - checkov -d gitops/ --framework kubernetes --output cli --soft-fail
+  allow_failure: true
+
+# ─────────────────────────────────────────────
+# Stage 2 : Build image (Kaniko — daemonless)
+# ─────────────────────────────────────────────
+build-image:
+  stage: build
+  image:
+    name: ${MIRROR_REGISTRY}/kaniko-project/executor:v1.23.2
+    entrypoint: [""]
+  script:
+    - mkdir -p /kaniko/.docker
+    - |
+      echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(echo -n ${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD} | base64)\"}}}" \
+        > /kaniko/.docker/config.json
+    - >
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${IMAGE_NAME}"
+      --cache=true
+      --cache-repo "${CI_REGISTRY_IMAGE}/cache"
+  only:
+    - main
+    - merge_requests
+
+# ─────────────────────────────────────────────
+# Stage 3 : Vulnerability scanning (Trivy)
+# ─────────────────────────────────────────────
+trivy-scan:
+  stage: scan-image
+  image:
+    name: ${MIRROR_REGISTRY}/aquasec/trivy:0.57.0
+    entrypoint: [""]
+  script:
+    - trivy image --exit-code 0 --severity LOW,MEDIUM "${IMAGE_NAME}"
+    - trivy image --exit-code 1 --severity HIGH,CRITICAL "${IMAGE_NAME}"
+  artifacts:
+    when: always
+    paths:
+      - trivy-report.json
+  allow_failure: false
+
+# ─────────────────────────────────────────────
+# Stage 4 : Vulnerability scanning (Grype)
+# ─────────────────────────────────────────────
+grype-scan:
+  stage: scan-image
+  image:
+    name: ${MIRROR_REGISTRY}/anchore/grype:v0.83.0
+    entrypoint: [""]
+  script:
+    - grype "${IMAGE_NAME}" --fail-on high
+  artifacts:
+    when: always
+    paths:
+      - grype-report.json
+  allow_failure: false
+
+# ─────────────────────────────────────────────
+# Stage 5 : SBOM Generation (Syft)
+# ─────────────────────────────────────────────
+syft-sbom:
+  stage: sbom
+  image:
+    name: ${MIRROR_REGISTRY}/anchore/syft:v1.16.0
+    entrypoint: [""]
+  script:
+    - syft "${IMAGE_NAME}" -o spdx-json > sbom.spdx.json
+    - syft "${IMAGE_NAME}" -o cyclonedx-json > sbom.cyclonedx.json
+  artifacts:
+    paths:
+      - sbom.spdx.json
+      - sbom.cyclonedx.json
+    expire_in: 30 days
+
+# ─────────────────────────────────────────────
+# Stage 6 : GitOps Deploy (ArgoCD sync)
+# ─────────────────────────────────────────────
+argocd-sync:
+  stage: deploy
+  image: argoproj/argocd:latest
+  script:
+    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_TOKEN} --insecure
+    - argocd app sync ${ARGOCD_APP_NAME} --force
+    - argocd app wait ${ARGOCD_APP_NAME} --health
+  only:
+    - main
+  environment:
+    name: production
+    url: https://console-openshift-console.apps.sno.okd.lab

@@ -1,0 +1,28 @@
+apiVersion: v1
+baseDomain: okd.lab
+metadata:
+  name: sno
+compute:
+  - architecture: amd64
+    hyperthreading: Enabled
+    name: worker
+    replicas: 0                          # SNO: no workers
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  replicas: 1                            # SNO: single master
+networking:
+  clusterNetwork:
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
+  machineNetwork:
+    - cidr: 192.168.100.0/24             # VMnet8 NAT subnet - adapt to your Workstation config
+  networkType: OVNKubernetes
+  serviceNetwork:
+    - 172.30.0.0/16
+platform:
+  none: {}                               # No cloud provider / no vCenter API required
+pullSecret: '{"auths":{"fake":{"auth":"aGVsbG86d29ybGQ="}}}'   # Fake pull secret for OKD (OSS, no subscription)
+sshKey: |
+  ssh-rsa AAAA...                        # Replace with your SSH public key: cat ~/.ssh/id_rsa.pub

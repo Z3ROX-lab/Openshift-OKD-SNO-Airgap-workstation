@@ -1,0 +1,40 @@
+kind: ImageSetConfiguration
+apiVersion: mirror.openshift.io/v1alpha2
+storageConfig:
+  local:
+    path: /tmp/oc-mirror-workspace           # Local workspace for oc-mirror metadata
+mirror:
+  platform:
+    channels:
+      - name: stable-4.17
+        type: okd                             # OKD OSS channel (not OCP)
+        shortestPath: true
+  operators:
+    - catalog: registry.redhat.io/redhat/community-operator-index:v4.17
+      packages:
+        - name: argocd-operator               # ArgoCD / OpenShift GitOps
+          channels:
+            - name: alpha
+        - name: vault                         # HashiCorp Vault
+          channels:
+            - name: stable
+        - name: kyverno                       # Kyverno policy engine
+          channels:
+            - name: stable
+        - name: falco                         # Falco runtime security
+          channels:
+            - name: stable
+        - name: grafana-operator              # Grafana
+          channels:
+            - name: v5
+        - name: prometheus                    # Prometheus
+          channels:
+            - name: beta
+  additionalImages:
+    - name: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+    - name: quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z
+    - name: docker.io/grafana/loki:3.2.0
+    - name: quay.io/kaniko-project/executor:v1.23.2
+    - name: docker.io/aquasec/trivy:0.57.0
+    - name: docker.io/anchore/grype:v0.83.0
+    - name: docker.io/anchore/syft:v1.16.0

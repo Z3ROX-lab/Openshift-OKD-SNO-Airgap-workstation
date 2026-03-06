@@ -1,0 +1,31 @@
+apiVersion: v1alpha1
+kind: AgentConfig
+metadata:
+  name: sno
+rendezvousIP: 192.168.100.10             # IP of the SNO node — adapt to your VMnet8 range
+hosts:
+  - hostname: sno-master
+    role: master
+    interfaces:
+      - name: ens33                      # Default VMware interface name
+        macAddress: "00:0C:29:xx:xx:xx"  # Replace with your VM MAC address (VMware Workstation → VM Settings → Network)
+    networkConfig:
+      interfaces:
+        - name: ens33
+          type: ethernet
+          state: up
+          ipv4:
+            enabled: true
+            address:
+              - ip: 192.168.100.10
+                prefix-length: 24
+            dhcp: false
+      dns-resolver:
+        config:
+          server:
+            - 192.168.100.1              # VMnet8 gateway / dnsmasq on host
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: 192.168.100.1
+            next-hop-interface: ens33
