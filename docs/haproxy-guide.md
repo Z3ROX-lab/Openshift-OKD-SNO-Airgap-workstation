@@ -183,7 +183,65 @@ haproxy -v
 
 ## 6. Configuration
 
-Le fichier de config HAProxy est `/etc/haproxy/haproxy.cfg` :
+### Structure d'un fichier HAProxy
+
+Un fichier HAProxy se découpe en 4 blocs :
+
+```
+global      → paramètres du processus HAProxy lui-même
+defaults    → valeurs par défaut appliquées à tous les frontends/backends
+frontend    → ce que HAProxy écoute (port entrant)
+backend     → où HAProxy envoie le trafic (serveur destination)
+```
+
+Chaque paire `frontend → backend` gère un port OKD.
+
+### Bloc `global`
+
+```
+log /dev/log local0    → envoie les logs au syslog Linux
+maxconn 2000           → max 2000 connexions simultanées
+daemon                 → tourne en arrière-plan
+```
+
+### Bloc `defaults`
+
+```
+mode tcp               → layer 4 — HAProxy forward les paquets TCP
+                         sans lire le contenu HTTP
+option tcplog          → format de log adapté au mode TCP
+timeout connect 5s     → abandon si la VM ne répond pas en 5s
+timeout client 1m      → connexion client maintenue 1 minute max
+timeout server 1m      → connexion vers la VM maintenue 1 minute max
+```
+
+> **Pourquoi `mode tcp` et pas `mode http` ?**
+> Si on mettait `mode http`, HAProxy essaierait de lire et modifier les headers HTTP, ce qui casserait le TLS d'OKD qui est terminé directement dans la VM. En mode TCP, HAProxy est transparent — il forward les octets tels quels.
+
+### Frontend stats (port 9000)
+
+```
+bind *:9000            → écoute sur le port 9000
+mode http              → exception — ce frontend est en HTTP pour le dashboard
+stats enable           → active le dashboard
+stats uri /stats       → accessible sur http://localhost:9000/stats
+stats auth admin:okdlab → protégé par mot de passe
+```
+
+### Les 4 paires frontend/backend OKD
+
+```
+frontend okd-api (:6443)
+      │
+      └──► backend okd-api-backend
+              option ssl-hello-chk   → vérifie que le port TLS répond
+              server sno-master 192.168.241.10:6443 check
+```
+
+- `check` → HAProxy vérifie régulièrement si le backend est UP. C'est ce qui fait passer les backends de rouge (DOWN) à vert (UP) dans la page stats quand la VM démarre.
+- `ssl-hello-chk` → HAProxy envoie un "hello" TLS pour vérifier que le port répond — sans établir une vraie connexion TLS complète.
+
+### Le fichier complet
 
 ```bash
 sudo tee /etc/haproxy/haproxy.cfg << 'EOF'
@@ -222,7 +280,6 @@ frontend stats
 
 #---------------------------------------------------------------------
 # API Server — oc login, kubectl, ArgoCD
-# Port 6443 → masters
 #---------------------------------------------------------------------
 frontend okd-api
     bind *:6443
@@ -235,7 +292,6 @@ backend okd-api-backend
 
 #---------------------------------------------------------------------
 # Machine Config Server — bootstrap uniquement
-# Port 22623 → masters
 #---------------------------------------------------------------------
 frontend okd-mcs
     bind *:22623
@@ -247,7 +303,6 @@ backend okd-mcs-backend
 
 #---------------------------------------------------------------------
 # Ingress HTTPS — toutes les apps OKD
-# Port 443 → workers (Ingress Controller)
 #---------------------------------------------------------------------
 frontend okd-https
     bind *:443
@@ -260,7 +315,6 @@ backend okd-https-backend
 
 #---------------------------------------------------------------------
 # Ingress HTTP — redirect vers HTTPS
-# Port 80 → workers (Ingress Controller)
 #---------------------------------------------------------------------
 frontend okd-http
     bind *:80
@@ -273,8 +327,49 @@ backend okd-http-backend
 EOF
 ```
 
-> **Pourquoi `mode tcp` et pas `mode http` ?**
-> HAProxy est configuré en mode TCP (layer 4) — il forward les paquets sans les inspecter. Le TLS est terminé directement par OKD, pas par HAProxy. C'est le bon pattern pour OKD car les certificats sont gérés par le cluster lui-même (cert-manager, Let's Encrypt ou CA interne).
+---
+
+## 6b. Flux de requêtes — ce qui se passe concrètement
+
+### Flux `oc login`
+
+```
+oc login https://api.sno.okd.lab:6443
+      │
+      │ 1. DNS : api.sno.okd.lab → 192.168.241.10
+      │    (dnsmasq résout, mais WSL2 intercepte d'abord)
+      ▼
+HAProxy :6443 (WSL2)
+      │
+      │ 2. Forward TCP vers backend
+      ▼
+192.168.241.10:6443 (API Server OKD dans la VM)
+      │
+      │ 3. TLS handshake + authentification
+      ▼
+Réponse : token → kubeconfig
+```
+
+### Flux console web
+
+```
+Browser : https://console-openshift-console.apps.sno.okd.lab
+      │
+      │ 1. DNS : *.apps.sno.okd.lab → 192.168.241.10
+      ▼
+HAProxy :443 (WSL2) — layer 4, ne lit pas le contenu
+      │
+      │ 2. Forward TCP brut
+      ▼
+192.168.241.10:443 — HAProxy OKD Router (layer 7)
+      │
+      │ 3. Lit le header Host: console-openshift-console.apps...
+      ▼
+Service console-openshift-console
+      │
+      ▼
+Pod console web OKD
+```
 
 ---
 
@@ -332,7 +427,7 @@ Comme pour le DNS, deux scripts dans `scripts/` :
 
 ---
 
-## Récapitulatif
+## Récapitulatif HAProxy
 
 | Composant | Rôle | Port |
 |---|---|---|
@@ -341,6 +436,33 @@ Comme pour le DNS, deux scripts dans `scripts/` :
 | HAProxy frontend `okd-https` | Toutes les apps OKD (HTTPS) | 443 |
 | HAProxy frontend `okd-http` | Redirect HTTP → HTTPS | 80 |
 | HAProxy stats | Dashboard monitoring HAProxy | 9000 |
+
+## Récapitulatif WSL2 complet
+
+Tout ce qui tourne dans WSL2 pour faire fonctionner OKD SNO :
+
+```
+WSL2 Ubuntu
+├── dnsmasq
+│   ├── *.okd.lab → 192.168.241.10
+│   ├── upstream : 100.100.100.100 (Tailscale) + 8.8.8.8
+│   └── écoute sur 127.0.0.1:53
+│
+├── HAProxy
+│   ├── :6443  → 192.168.241.10:6443  (API Server)
+│   ├── :22623 → 192.168.241.10:22623 (Machine Config Server)
+│   ├── :443   → 192.168.241.10:443   (Ingress HTTPS)
+│   ├── :80    → 192.168.241.10:80    (Ingress HTTP)
+│   └── :9000  → stats dashboard
+│
+└── /etc/resolv.conf
+    ├── nameserver 127.0.0.1       (dnsmasq)
+    ├── nameserver 100.100.100.100 (Tailscale)
+    └── nameserver 8.8.8.8         (fallback)
+```
+
+Les backends HAProxy sont **DOWN** jusqu'au boot de la VM OKD — c'est normal.
+Dès que la VM démarre et qu'OKD est installé, ils passent **UP** automatiquement.
 
 ---
 
