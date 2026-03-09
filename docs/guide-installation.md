@@ -175,7 +175,7 @@ cat ~/.ssh/okd-sno.pub
 
 ### Pourquoi dnsmasq ?
 
-OKD génère des URLs basées sur `baseDomain` et `metadata.name` définis dans `install-config.yaml`. Ces URLs doivent être résolvables depuis l'hôte et depuis la VM.
+OKD génère des URLs basées sur `baseDomain` et `metadata.name` définis dans `install-config.yaml`. Ces URLs doivent être résolvables depuis WSL2 et depuis Windows.
 
 | URL | Résolution attendue |
 |-----|-------------------|
@@ -184,44 +184,98 @@ OKD génère des URLs basées sur `baseDomain` et `metadata.name` définis dans 
 | `*.apps.sno.okd.lab` | `192.168.241.10` |
 | `console-openshift-console.apps.sno.okd.lab` | `192.168.241.10` |
 
-### Installation et configuration
+Sans dnsmasq, le browser ne sait pas où est `console-openshift-console.apps.sno.okd.lab` — ces domaines n'existent pas sur Internet, ils sont locaux au lab.
+
+### Fix MTU avant toute installation
+
+WSL2 utilise un MTU de 1360 par défaut, ce qui provoque des erreurs TLS sur les gros téléchargements apt. À appliquer **avant chaque session** où tu dois installer des paquets :
 
 ```bash
-# Installer dnsmasq
-sudo apt update && sudo apt install -y dnsmasq
+sudo ip link set eth0 mtu 1280
+```
 
-# Créer la config OKD
+> **Pourquoi ?** Les paquets WSL2 passent par plusieurs couches (Hyper-V, carte réseau physique). Chaque couche ajoute un overhead. Si un paquet TLS est trop grand, il est fragmenté en route → le checksum cryptographique ne correspond plus → `bad record mac`. MTU 1280 garantit que les paquets passent sans fragmentation.
+
+### Installation de dnsmasq
+
+```bash
+sudo apt update && sudo apt install -y dnsmasq
+```
+
+### Création de la config OKD
+
+```bash
 sudo tee /etc/dnsmasq.d/okd-sno.conf << 'EOF'
 # OKD SNO — résolution DNS locale
 address=/api.sno.okd.lab/192.168.241.10
 address=/api-int.sno.okd.lab/192.168.241.10
 address=/.apps.sno.okd.lab/192.168.241.10
-address=/mirror.sno.okd.lab/192.168.241.10
+
+# Écouter uniquement sur loopback — évite le conflit avec le DNS interne WSL2
+listen-address=127.0.0.1
+bind-interfaces
 EOF
-
-# Démarrer dnsmasq
-sudo systemctl enable dnsmasq
-sudo systemctl restart dnsmasq
-
-# Tester
-dig api.sno.okd.lab @127.0.0.1
-# Doit retourner 192.168.241.10
 ```
 
-### Configurer WSL2 pour utiliser dnsmasq
+> **Pourquoi `listen-address=127.0.0.1` ?** WSL2 a son propre DNS interne sur `10.255.255.254:53`. Si dnsmasq essaie d'écouter sur toutes les interfaces → conflit de port → crash. En limitant à `127.0.0.1`, les deux coexistent.
+>
+> **Pourquoi `bind-interfaces` ?** Renforce le `listen-address` — force dnsmasq à rester strictement sur `127.0.0.1`.
+>
+> **Pourquoi le `.` devant `.apps` ?** C'est un wildcard — couvre `console.apps`, `vault.apps`, `argocd.apps`... toutes les routes OKD d'un coup.
+
+### Désactivation de systemd-resolved
+
+`systemd-resolved` est le résolveur DNS par défaut d'Ubuntu. Il occupe le port 53 — on doit le désactiver pour libérer le port à dnsmasq :
 
 ```bash
-# Désactiver la génération automatique de resolv.conf
+sudo systemctl disable systemd-resolved
+sudo systemctl stop systemd-resolved
+```
+
+### Démarrage de dnsmasq
+
+```bash
+sudo systemctl enable dnsmasq
+sudo systemctl start dnsmasq
+sudo systemctl status dnsmasq
+# → Active: active (running)
+```
+
+### Configuration de WSL2 pour utiliser dnsmasq
+
+Par défaut, à chaque démarrage WSL2 **régénère automatiquement** `/etc/resolv.conf` et pointe vers le DNS Windows. On désactive ce comportement :
+
+```bash
+# Désactiver la génération automatique
 sudo tee /etc/wsl.conf << 'EOF'
 [network]
 generateResolvConf = false
 EOF
 
-# Pointer sur dnsmasq local
+# Pointer sur dnsmasq + fallback Google DNS
+sudo rm -f /etc/resolv.conf
 sudo tee /etc/resolv.conf << 'EOF'
 nameserver 127.0.0.1
 nameserver 8.8.8.8
 EOF
+```
+
+> **Pourquoi deux nameservers ?** Linux essaie d'abord `127.0.0.1` (dnsmasq). Si dnsmasq ne connaît pas le domaine (ex: `github.com`), il passe au suivant → `8.8.8.8`. Cela permet de résoudre `*.okd.lab` localement ET d'accéder normalement à Internet.
+
+### Validation
+
+```bash
+# Test résolution API
+dig api.sno.okd.lab @127.0.0.1 +short
+# → 192.168.241.10 ✅
+
+# Test wildcard apps
+dig console-openshift-console.apps.sno.okd.lab @127.0.0.1 +short
+# → 192.168.241.10 ✅
+
+# Test sans préciser le serveur (via resolv.conf)
+dig api.sno.okd.lab +short
+# → 192.168.241.10 ✅
 ```
 
 ---
@@ -506,47 +560,96 @@ sed -i 's/00:0C:29:xx:xx:xx/00:0C:29:TA:MA:C/' \
 L'Agent-based Installer embarque tout dans une ISO bootable — aucune infrastructure externe requise (pas de bootstrap VM, pas de serveur HTTP, pas d'API vCenter). Compatible airgap.
 
 ```
-openshift-install lit install-config.yaml + agent-config.yaml
-          │
-          ▼
-Génère les manifests Kubernetes
-          │
-          ▼
-Génère les ignition configs (bootstrap.ign, master.ign)
-          │
-          ▼
-Assemble agent.x86_64.iso (~1 Go)
-contenant : kernel SCOS + agent + ignition configs
+install-config.yaml + agent-config.yaml
+          |
+          v
+openshift-install agent create image
+          |
+          |-- Génère les manifests Kubernetes
+          |-- Génère les ignition configs
+          |-- Télécharge la base ISO SCOS (cachée dans ~/.cache/agent/)
+          |
+          v
+agent.x86_64.iso (~770 Mo)
+contenant : kernel SCOS + agent OKD + ignition configs + config réseau
 ```
 
-> ⚠️ `openshift-install` **consomme et supprime** `install-config.yaml` et `agent-config.yaml` après génération. Toujours travailler depuis une copie.
+> ⚠️ `openshift-install` **consomme et supprime** `install-config.yaml` et `agent-config.yaml` après génération. Toujours travailler depuis des **copies** — les originaux restent dans `install/` du repo.
+
+### Prérequis — les deux fichiers de config
+
+| Fichier | Rôle |
+|---------|------|
+| `install-config.yaml` | Définit le cluster (baseDomain, réseau OVN, sshKey, replicas) |
+| `agent-config.yaml` | Définit les nœuds (MAC address, rendezvousIP, hostname, role) |
 
 ### Commandes
 
 ```bash
-# Créer le répertoire de travail (copie des configs)
-mkdir -p ~/okd-sno-install
-cp /mnt/d/okd-lab/install/install-config.yaml ~/okd-sno-install/
-cp /mnt/d/okd-lab/install/agent-config.yaml ~/okd-sno-install/
+# Créer le répertoire de travail
+mkdir -p ~/work/okd-sno-install
+
+# Copier les configs depuis le repo (PAS les originaux !)
+cp ~/work/Openshift-OKD-SNO-Airgap-workstation/install/install-config.yaml ~/work/okd-sno-install/
+cp ~/work/Openshift-OKD-SNO-Airgap-workstation/install/agent-config.yaml ~/work/okd-sno-install/
 
 # Générer l'ISO
-openshift-install agent create image --dir ~/okd-sno-install/
+openshift-install agent create image --dir ~/work/okd-sno-install/
+```
 
-# Vérifier
-ls -lh ~/okd-sno-install/
-# agent.x86_64.iso   (~1 Go)
-# auth/              (kubeconfig + kubeadmin-password — générés après install)
+### Résultat attendu
+
+![ISO Generated](screenshots/iso-generated.png)
+
+Ce que l'output nous dit ligne par ligne :
+
+```
+WARNING Release Image Architecture not detected
+→ Normal pour OKD — pas d'impact sur la génération
+
+INFO The rendezvous host IP (node0 IP) is 192.168.241.10
+→ Confirmation que rendezvousIP est bien lu depuis agent-config.yaml
+
+INFO Extracting base ISO from release payload
+→ Téléchargement de la base ISO SCOS depuis les release images OKD
+
+INFO Base ISO obtained and cached at ~/.cache/agent/image_cache/coreos-x86_64.iso
+→ Mis en cache — les prochaines générations seront instantanées
+
+INFO Consuming Agent Config from target directory
+INFO Consuming Install Config from target directory
+→ Les deux fichiers sont lus puis SUPPRIMÉS — c'est normal
+
+INFO Generated ISO at ~/work/okd-sno-install/agent.x86_64.iso
+→ L'ISO est prête (~770 Mo)
+```
+
+### Contenu du répertoire après génération
+
+```
+~/work/okd-sno-install/
+├── agent.x86_64.iso    (770 Mo) <- ISO à monter dans VMware
+├── rendezvousIP                  <- fichier interne openshift-install
+└── auth/                         <- peuplé APRÈS installation
+    ├── kubeconfig                <- credentials admin cluster
+    └── kubeadmin-password        <- mot de passe console web
+```
+
+> ⚠️ `install-config.yaml` et `agent-config.yaml` ont été **supprimés** — c'est normal. Les originaux sont toujours dans `install/` du repo.
+
+### Copier l'ISO vers Windows pour VMware
+
+```bash
+cp ~/work/okd-sno-install/agent.x86_64.iso /mnt/d/okd-lab/
 ```
 
 ### Monter l'ISO dans VMware
 
 ```
-VM Settings → CD/DVD → Use ISO image file
-→ Sélectionner ~/okd-sno-install/agent.x86_64.iso
-  (accessible depuis Windows via \\wsl$\Ubuntu\home\zerotrust\okd-sno-install\)
+VM Settings -> CD/DVD (IDE) -> Use ISO image file
+-> Browse -> D:\okd-lab\agent.x86_64.iso
+-> Cocher : Connect at power on
 ```
-
----
 
 ## 11. Boot et installation
 
