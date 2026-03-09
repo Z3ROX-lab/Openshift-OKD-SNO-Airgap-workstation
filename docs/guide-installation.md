@@ -355,36 +355,133 @@ hosts:
 
 | Paramètre | Valeur | Raison |
 |-----------|--------|--------|
-| Guest OS | RHEL 9 64-bit | SCOS = CentOS Stream 9 |
+| Guest OS | CentOS 8 64-bit | SCOS = CentOS Stream CoreOS |
 | vCPU | 8 | Minimum OKD SNO |
 | RAM | 24 576 MB | Confort + etcd |
-| Disk | 120 Go thin | Sur D:\ |
-| Réseau | VMnet8 NAT | Même subnet que WSL2 |
+| Disk | 120 Go | Sur D:\ |
+| Réseau | NAT (VMnet8) | Même subnet que WSL2 |
 | Firmware | UEFI | SCOS ne supporte pas BIOS legacy |
 | Secure Boot | ❌ Désactivé | Kernel OKD non signé |
 
 ### Étapes de création
 
-1. **New Virtual Machine → Custom**
-2. Guest OS : **Red Hat Enterprise Linux 9 (64-bit)**
-3. Name : `okd-sno-master`
-4. Location : `D:\okd-lab\vm\`
-5. Processors : **8 vCPU**
-6. Memory : **24 576 MB**
-7. Network : **VMnet8 (NAT)**
-8. Disk : **120 Go, thin provisioned**
-9. **Edit VM Settings → Options → Advanced**
-   - Firmware : **UEFI**
-   - Disable Secure Boot
+**Étape 1 — Hardware Compatibility**
 
-### Paramètre critique : disk.EnableUUID
+Laisser **Workstation 17.5 or later**.
+
+![Hardware Compatibility](screenshots/vm-01-hardware-compat.png)
+
+---
+
+**Étape 2 — Guest OS Installation**
+
+Sélectionner **"I will install the operating system later"** — l'ISO sera générée par `openshift-install` plus tard, pas téléchargée.
+
+![Install Later](screenshots/vm-02-install-later.png)
+
+---
+
+**Étape 3 — Guest Operating System**
+
+Sélectionner **Linux → CentOS 8 64-bit**.
+
+> SCOS est basé sur CentOS Stream 9 — CentOS 8 est le plus proche disponible dans VMware Workstation 17. Ce choix n'affecte pas l'OS réellement installé, c'est un hint d'optimisation VMware.
+
+![Guest OS CentOS 8](screenshots/vm-03-guest-os-centos8.png)
+
+---
+
+**Étape 4 — Nom et emplacement**
+
+- Name : `okd-sno-master`
+- Location : `D:\okd-lab\vm\`
+
+![Name and Location](screenshots/vm-04-name-location.png)
+
+---
+
+**Étape 5 — Processeurs**
+
+- Number of processors : **8**
+- Cores per processor : **1**
+- Total : **8 vCPU** ✅
+
+![CPU 8 vCPU](screenshots/vm-05-cpu-8vcpu.png)
+
+---
+
+**Étape 6 — Mémoire**
+
+Saisir **24 576 MB** (24 Go).
+
+> VMware indique "Maximum recommended: 24.3 GB" — on est légèrement au-dessus mais c'est intentionnel, OKD SNO a besoin de marge pour etcd et les Cluster Operators.
+
+![Memory 24576 MB](screenshots/vm-06-memory-24576.png)
+
+---
+
+**Étape 7 — Réseau**
+
+Sélectionner **Use network address translation (NAT)** — c'est VMnet8, le subnet `192.168.241.0/24`.
+
+![Network NAT](screenshots/vm-07-network-nat.png)
+
+---
+
+**Étape 8 — Fichier disque**
+
+Le fichier `okd-sno-master.vmdk` sera créé dans `D:\okd-lab\vm\`.
+
+![Disk File](screenshots/vm-08-disk-file.png)
+
+---
+
+**Étape 9 — Résumé avant création**
+
+Vérifier le récapitulatif :
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Name | okd-sno-master |
+| Location | D:\okd-lab\vm\ |
+| OS | CentOS 8 64-bit |
+| Hard Disk | 120 GB |
+| Memory | 24 576 MB |
+| Network | NAT |
+| CPU | 8 cores |
+
+![Summary](screenshots/vm-09-summary.png)
+
+Cliquer **Finish**.
+
+---
+
+**Étape 10 — VM Settings (post-création)**
+
+La VM est créée. Vérifier les paramètres hardware avant tout démarrage.
+
+![VM Settings Hardware](screenshots/vm-10-settings-hardware.png)
+
+### ⚠️ Paramètres critiques post-création
+
+**1. UEFI + Secure Boot OFF**
+
+```
+VM Settings → Options → Advanced → Firmware type
+→ UEFI
+→ Décocher "Enable secure boot"
+```
+
+SCOS ne supporte pas le BIOS legacy. Secure Boot doit être désactivé car le kernel OKD n'est pas signé par une autorité reconnue.
+
+**2. disk.EnableUUID**
 
 ```
 VM Settings → Options → Advanced → Configuration Parameters
 → Add Row : disk.EnableUUID = TRUE
 ```
 
-Sans ce paramètre, les CSI drivers de stockage ne fonctionnent pas correctement.
+Sans ce paramètre, les CSI drivers (stockage persistant) ne fonctionnent pas.
 
 ### Récupérer la MAC address
 
