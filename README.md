@@ -35,27 +35,53 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                VMware Workstation Host               │
-│                                                     │
-│  ┌──────────────────────────────────────────────┐   │
-│  │         OKD SNO VM  (FCOS + OKD 4.17)        │   │
-│  │  vCPU: 8  |  RAM: 24 Go  |  Disk: 120 Go     │   │
-│  │                                              │   │
-│  │  ┌─────────┐ ┌──────────┐ ┌──────────────┐  │   │
-│  │  │  ArgoCD │ │  Vault   │ │  GitLab CI   │  │   │
-│  │  └─────────┘ └──────────┘ └──────────────┘  │   │
-│  │  ┌─────────┐ ┌──────────┐ ┌──────────────┐  │   │
-│  │  │ Kyverno │ │  Falco   │ │  Prometheus  │  │   │
-│  │  └─────────┘ └──────────┘ └──────────────┘  │   │
-│  │  ┌─────────┐ ┌──────────────────────────┐   │   │
-│  │  │  MinIO  │ │  Mirror Registry (airgap) │  │   │
-│  │  └─────────┘ └──────────────────────────┘   │   │
-│  └──────────────────────────────────────────────┘   │
-│                                                     │
-│  Host services: dnsmasq  |  HAProxy  |  oc-mirror   │
-└─────────────────────────────────────────────────────┘
+  Browser / oc CLI
+        │
+        ▼
+┌───────────────────────────────────────────────────────────┐
+│                  Windows Host (GEEKOM A6)                  │
+│                                                           │
+│  ┌────────────────────────────────────────────────────┐   │
+│  │                  Ubuntu WSL                        │   │
+│  │                                                    │   │
+│  │  dnsmasq          HAProxy            oc-mirror     │   │
+│  │  *.okd.lab   :6443 (API)        mirror registry    │   │
+│  │  → SNO IP    :22623 (MCS)       (airgap images)    │   │
+│  │              :80   (HTTP)                          │   │
+│  │              :443  (HTTPS)                         │   │
+│  └───────────────────┬────────────────────────────────┘   │
+│                      │ VMnet8 NAT (192.168.100.0/24)       │
+│  ┌───────────────────▼────────────────────────────────┐   │
+│  │           OKD SNO VM — 192.168.100.10              │   │
+│  │           FCOS │ vCPU: 8 │ RAM: 24G │ Disk: 120G  │   │
+│  │                                                    │   │
+│  │   ┌──────────────────────────────────────────┐    │   │
+│  │   │       OpenShift Ingress Controller        │    │   │
+│  │   │  (HAProxy interne — Router OKD natif)     │    │   │
+│  │   └──┬──────────┬──────────┬──────────┬───────┘    │   │
+│  │      │          │          │          │            │   │
+│  │      ▼          ▼          ▼          ▼            │   │
+│  │  console    argocd      vault      gitlab          │   │
+│  │  .apps.*    .apps.*    .apps.*    .apps.*          │   │
+│  │                                                    │   │
+│  │  ┌──────────┐ ┌─────────┐ ┌──────────────────┐    │   │
+│  │  │  Kyverno │ │  Falco  │ │ Mirror Registry   │    │   │
+│  │  │  Trivy   │ │  Grype  │ │ (airgap — Harbor) │    │   │
+│  │  │  Checkov │ │  Syft   │ └──────────────────┘    │   │
+│  │  └──────────┘ └─────────┘                         │   │
+│  │  ┌──────────┐ ┌─────────┐ ┌──────────────────┐    │   │
+│  │  │  MinIO   │ │  Loki   │ │    Prometheus     │    │   │
+│  │  │  (S3)    │ │         │ │    + Grafana       │    │   │
+│  │  └──────────┘ └─────────┘ └──────────────────┘    │   │
+│  └────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────────────┘
 ```
+
+**Flux réseau :**
+1. `*.apps.sno.okd.lab` → dnsmasq résout vers `192.168.100.10`
+2. HAProxy WSL forward le trafic `:80`/`:443` vers la VM SNO
+3. OpenShift Ingress Controller dispatche vers le bon pod via les `Route` objects
+4. Chaque service = 1 `Route` OKD — aucune modif HAProxy nécessaire
 
 **Network mode :** VMnet8 (NAT) — cluster accessible depuis l'hôte uniquement  
 **Airgap simulation :** réseau VM coupé post-install, toutes les images via mirror registry local
