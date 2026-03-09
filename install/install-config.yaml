@@ -17,12 +17,12 @@ networking:
     - cidr: 10.128.0.0/14
       hostPrefix: 23
   machineNetwork:
-    - cidr: 192.168.100.0/24             # VMnet8 NAT subnet - adapt to your Workstation config
+    - cidr: 192.168.241.0/24             # VMnet8 NAT subnet
   networkType: OVNKubernetes
   serviceNetwork:
     - 172.30.0.0/16
 platform:
-  none: {}                               # No cloud provider / no vCenter API required
-pullSecret: '{"auths":{"fake":{"auth":"aGVsbG86d29ybGQ="}}}'   # Fake pull secret for OKD (OSS, no subscription)
+  none: {}
+pullSecret: '{"auths":{"fake":{"auth":"aGVsbG86d29ybGQ="}}}'
 sshKey: |
-  ssh-rsa AAAA...                        # Replace with your SSH public key: cat ~/.ssh/id_rsa.pub
+  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMfYWQYhU/AfkK5U+URfW5Huvg4BeZUKlnKZSlYW7VqW okd-sno-lab
