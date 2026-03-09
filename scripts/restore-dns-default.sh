@@ -6,7 +6,11 @@
 #   1. Arrête dnsmasq
 #   2. Supprime la config OKD de dnsmasq
 #   3. Réactive systemd-resolved
-#   4. Réactive la génération automatique de resolv.conf par WSL2
+#   4. Remet resolv.conf avec Tailscale DNS (100.100.100.100)
+#   5. Réactive la génération automatique de resolv.conf par WSL2
+#
+# Note Tailscale : resolv.conf est remis avec 100.100.100.100 en priorité
+# Tailscale le réécrit de toute façon au prochain démarrage
 #
 # Pour réactiver OKD DNS : ./setup-dns-okd.sh
 # =============================================================================
@@ -59,13 +63,14 @@ sudo tee /etc/wsl.conf > /dev/null << EOF
 generateResolvConf = true
 EOF
 
-log "Suppression du resolv.conf manuel..."
+log "Restauration de /etc/resolv.conf avec Tailscale DNS..."
 sudo rm -f /etc/resolv.conf
-
-# Recréer le lien symlink standard Ubuntu/WSL2
-sudo ln -sf /run/resolvconf/resolv.conf /etc/resolv.conf 2>/dev/null || \
-sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || \
-warn "Impossible de recréer le symlink — redémarre WSL2 : 'wsl --shutdown' depuis PowerShell"
+sudo tee /etc/resolv.conf > /dev/null << EOF
+# DNS par défaut — Tailscale + Google
+# Tailscale réécrit ce fichier au prochain démarrage WSL2
+nameserver 100.100.100.100
+nameserver 8.8.8.8
+EOF
 
 # -----------------------------------------------------------------------------
 # 5. Validation

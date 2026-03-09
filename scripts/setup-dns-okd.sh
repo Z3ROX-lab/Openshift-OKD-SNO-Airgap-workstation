@@ -7,7 +7,12 @@
 #   2. Installe dnsmasq si absent
 #   3. Crée la config DNS pour *.okd.lab → 192.168.241.10
 #   4. Désactive systemd-resolved (libère le port 53)
-#   5. Configure resolv.conf pour pointer sur dnsmasq
+#   5. Configure dnsmasq avec upstream DNS (Tailscale + Google)
+#   6. Configure resolv.conf pour pointer sur dnsmasq
+#
+# Compatibilité Tailscale : le DNS Tailscale (100.100.100.100) est
+# ajouté comme upstream — dnsmasq forward tout ce qui n'est pas
+# *.okd.lab vers Tailscale puis 8.8.8.8 en fallback
 #
 # Pour revenir à la config par défaut : ./restore-dns-default.sh
 # =============================================================================
@@ -77,6 +82,11 @@ address=/.apps.sno.okd.lab/${SNO_IP}
 # Écouter uniquement sur loopback — évite conflit avec DNS interne WSL2
 listen-address=127.0.0.1
 bind-interfaces
+
+# Upstream DNS — forward tout ce qui n'est pas *.okd.lab
+# Tailscale DNS en priorité, Google en fallback
+server=100.100.100.100
+server=8.8.8.8
 EOF
 
 # -----------------------------------------------------------------------------
@@ -100,7 +110,9 @@ sudo rm -f /etc/resolv.conf
 sudo tee /etc/resolv.conf > /dev/null << EOF
 # OKD SNO Lab — DNS local
 # Pour revenir au défaut : restore-dns-default.sh
+# Tailscale DNS géré via upstream dnsmasq (server=100.100.100.100)
 nameserver 127.0.0.1
+nameserver 100.100.100.100
 nameserver 8.8.8.8
 EOF
 

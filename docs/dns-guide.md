@@ -270,8 +270,15 @@ address=/.apps.sno.okd.lab/192.168.241.10
 # WSL2 a son propre DNS sur 10.255.255.254:53 — évite le conflit
 listen-address=127.0.0.1
 bind-interfaces
+
+# Upstream DNS — forward tout ce qui n'est pas *.okd.lab
+# Tailscale DNS en priorité, Google en fallback
+server=100.100.100.100
+server=8.8.8.8
 EOF
 ```
+
+> **Pourquoi `server=100.100.100.100` ?** Tailscale utilise son propre DNS (`100.100.100.100`) et peut écraser `/etc/resolv.conf` au démarrage. En ajoutant le DNS Tailscale comme upstream dans dnsmasq, les deux coexistent : dnsmasq résout `*.okd.lab` localement et forward tout le reste vers Tailscale → Internet.
 
 ### Étape 5 — Démarrage
 
@@ -289,15 +296,18 @@ sudo tee /etc/wsl.conf << 'EOF'
 generateResolvConf = false
 EOF
 
-# Pointer sur dnsmasq + fallback Internet
+# Pointer sur dnsmasq + fallbacks
 sudo rm -f /etc/resolv.conf
 sudo tee /etc/resolv.conf << 'EOF'
 nameserver 127.0.0.1
+nameserver 100.100.100.100
 nameserver 8.8.8.8
 EOF
 ```
 
-> **Ordre des nameservers** : Linux essaie d'abord `127.0.0.1` (dnsmasq). Si dnsmasq ne connaît pas le domaine (`github.com`, `npmjs.org`...) → passe à `8.8.8.8`. Internet fonctionne normalement.
+> **Ordre des nameservers** : Linux essaie d'abord `127.0.0.1` (dnsmasq). dnsmasq résout `*.okd.lab` localement et forward le reste vers `100.100.100.100` (Tailscale) puis `8.8.8.8` en dernier recours.
+>
+> **Problème Tailscale** : Tailscale peut écraser `/etc/resolv.conf` au démarrage. La solution est de configurer dnsmasq avec `server=100.100.100.100` comme upstream — ainsi même si Tailscale réécrit resolv.conf, relancer `setup-dns-okd.sh` remet tout en ordre.
 
 ---
 
