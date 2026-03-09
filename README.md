@@ -22,7 +22,9 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 | Load Balancing | HAProxy (API + Ingress) |
 | IaC | Terraform (`platform: none`) |
 | Airgap | `oc-mirror`, Mirror Registry, ImageSetConfig |
-| GitOps | ArgoCD, ApplicationSets |
+| Operator lifecycle | OperatorHub (airgap mode), CatalogSource, OLM |
+| Identity & SSO | Keycloak, OAuth Server OCP → Keycloak OIDC |
+| GitOps | ArgoCD (OpenShift GitOps Operator), ApplicationSets |
 | Secrets management | HashiCorp Vault, Vault Agent Injector |
 | CI/CD | GitLab CI, Kaniko, GitLab Runners |
 | Container security | Trivy, Grype, Syft, Checkov, Falco |
@@ -125,23 +127,41 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 
 → [Documentation Phase 1](docs/phase1-bootstrap.md)
 
-### Phase 2 — HashiCorp Vault + CI/CD
-> Secrets management enterprise + pipeline GitLab/Kaniko
+### Phase 2 — Identity, SSO & Secrets
+> Keycloak SSO unifié + HashiCorp Vault + CI/CD GitLab/Kaniko
 
-- [ ] Déploiement Vault (dev mode → prod mode)
+**Phase 2a — Keycloak**
+- [ ] Déploiement Keycloak via OperatorHub
+- [ ] Realm `okd` + Clients (openshift, argocd, vault, gitlab, grafana)
+- [ ] Groupes Keycloak → ClusterRoleBinding OCP (cluster-admins, developers, viewers)
+
+**Phase 2b — OAuth Server OCP → Keycloak OIDC**
+- [ ] Configuration OAuth CR (`config.openshift.io/v1`)
+- [ ] SSO unifié : Console OCP + oc CLI via Keycloak
+- [ ] Test login console avec user Keycloak
+
+**Phase 2c — HashiCorp Vault**
+- [ ] Déploiement Vault via OperatorHub
 - [ ] Vault Agent Injector configuration
-- [ ] GitLab Runner sur OKD
+- [ ] Auth Kubernetes → Vault (pods s'authentifient via ServiceAccount)
+
+**Phase 2d — CI/CD GitLab + Kaniko**
+- [ ] GitLab Runner sur OKD (Kubernetes executor)
 - [ ] Pipeline Kaniko (build images sans Docker daemon)
 - [ ] Intégration Trivy + Grype + Syft dans la CI
+- [ ] ArgoCD sync depuis GitLab
 
-→ [Documentation Phase 2](docs/phase2-vault-cicd.md)
+→ [Documentation Phase 2](docs/phase2-identity-sso-secrets.md)
 
 ### Phase 3 — Airgap Simulation
-> Reproduire un environnement déconnecté grands comptes
+> Reproduire un environnement déconnecté grands comptes (défense, banque, télécom)
 
-- [ ] Mirror registry local (Harbor ou `mirror-registry`)
+- [ ] Mirror registry local (Harbor)
 - [ ] `oc-mirror` ImageSetConfig pour OKD + operators
-- [ ] Coupure réseau VM + validation cluster airgap
+- [ ] Reconfiguration OperatorHub → `disableAllDefaultSources: true`
+- [ ] CatalogSource custom pointant vers le mirror registry
+- [ ] Coupure réseau VM (VMnet8 NAT → VMnet1 Host-only)
+- [ ] Validation cluster + OperatorHub en mode airgap
 - [ ] Mise à jour cluster en mode airgap
 
 → [Documentation Phase 3](docs/phase3-airgap.md)
@@ -205,6 +225,9 @@ This project directly addresses the skill requirements of **Expert Kubernetes/Op
 - ✅ OpenShift UPI deployment (`platform: none`, Agent-based)
 - ✅ Load balancing with HAProxy (L4 — API + Ingress)
 - ✅ Airgap cluster operations (`oc-mirror`, disconnected operators)
+- ✅ OperatorHub in airgap mode (CatalogSource, OLM, mirror registry)
+- ✅ SSO with Keycloak — OAuth Server OCP → Keycloak OIDC (Console + oc CLI)
+- ✅ Unified SSO for all apps (ArgoCD, Vault, GitLab, Grafana via Keycloak)
 - ✅ GitOps with ArgoCD
 - ✅ Secrets management with HashiCorp Vault
 - ✅ Container image build with Kaniko (daemonless)
