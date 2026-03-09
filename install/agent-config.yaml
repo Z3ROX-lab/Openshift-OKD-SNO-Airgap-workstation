@@ -8,7 +8,7 @@ hosts:
     role: master
     interfaces:
       - name: ens33
-        macAddress: "00:0C:29:xx:xx:xx"  # ← Remplacer avec la MAC réelle
+        macAddress: "00:50:56:27:C8:0B"  # VM okd-sno-master
                                           # VMware Workstation → VM Settings
                                           # → Network Adapter → Advanced → MAC Address
     networkConfig:
