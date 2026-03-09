@@ -19,6 +19,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 | Domain | Tools |
 |--------|-------|
 | Cluster provisioning | OKD 4.17, Agent-based Installer, FCOS |
+| Load Balancing | HAProxy (API + Ingress) |
 | IaC | Terraform (`platform: none`) |
 | Airgap | `oc-mirror`, Mirror Registry, ImageSetConfig |
 | GitOps | ArgoCD, ApplicationSets |
@@ -71,6 +72,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 - `oc` CLI
 - `oc-mirror` plugin
 - Terraform >= 1.6
+- HAProxy (load balancer — API + Ingress)
 - dnsmasq (résolution DNS locale)
 
 ### DNS entries à ajouter (`/etc/hosts` ou dnsmasq)
@@ -89,6 +91,8 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 > Provisionner le cluster OKD SNO via Agent-based Installer
 
 - [ ] Génération `install-config.yaml` + `agent-config.yaml`
+- [ ] Configuration HAProxy sur l'hôte WSL
+- [ ] Configuration dnsmasq sur l'hôte WSL
 - [ ] Création de l'ISO avec `openshift-install`
 - [ ] Création VM VMware Workstation + boot ISO
 - [ ] Validation cluster (`oc get nodes`, console web)
@@ -142,6 +146,9 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 ```
 .
 ├── install/                    # install-config.yaml + agent-config.yaml
+├── haproxy/
+│   ├── haproxy.cfg             # HAProxy config (API :6443, Ingress :80/:443)
+│   └── haproxy-setup.md        # Installation + test guide
 ├── terraform/
 │   ├── ignition/               # Ignition configs generation
 │   ├── dns/                    # dnsmasq configuration
@@ -170,6 +177,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 This project directly addresses the skill requirements of **Expert Kubernetes/OpenShift** missions (on-premise, grands comptes) :
 
 - ✅ OpenShift UPI deployment (`platform: none`, Agent-based)
+- ✅ Load balancing with HAProxy (L4 — API + Ingress)
 - ✅ Airgap cluster operations (`oc-mirror`, disconnected operators)
 - ✅ GitOps with ArgoCD
 - ✅ Secrets management with HashiCorp Vault
