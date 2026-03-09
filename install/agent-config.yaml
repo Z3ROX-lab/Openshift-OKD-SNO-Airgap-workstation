@@ -11,23 +11,3 @@ hosts:
         macAddress: "00:50:56:27:C8:0B"  # VM okd-sno-master
                                           # VMware Workstation → VM Settings
                                           # → Network Adapter → Advanced → MAC Address
-    networkConfig:
-      interfaces:
-        - name: ens33
-          type: ethernet
-          state: up
-          ipv4:
-            enabled: true
-            dhcp: false
-            address:
-              - ip: 192.168.241.10
-                prefix-length: 24
-      dns-resolver:
-        config:
-          server:
-            - 192.168.241.2              # Gateway VMnet8 (standard VMware NAT)
-      routes:
-        config:
-          - destination: 0.0.0.0/0
-            next-hop-address: 192.168.241.2
-            next-hop-interface: ens33
