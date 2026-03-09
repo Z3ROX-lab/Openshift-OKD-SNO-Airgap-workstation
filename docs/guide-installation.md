@@ -643,6 +643,10 @@ INFO Generated ISO at ~/work/okd-sno-install/agent.x86_64.iso
 cp ~/work/okd-sno-install/agent.x86_64.iso /mnt/d/okd-lab/
 ```
 
+![ISO Copy Windows](screenshots/iso-copy-windows.png)
+
+> L'ISO est maintenant accessible depuis Windows à `D:\okd-lab\agent.x86_64.iso` — VMware peut la monter directement.
+
 ### Monter l'ISO dans VMware
 
 ```
