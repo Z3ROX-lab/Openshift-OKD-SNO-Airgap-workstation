@@ -1,6 +1,7 @@
 # Phase 1 — Guide Complet : Bootstrap OKD SNO sur VMware Workstation
 
 > Document pédagogique — Comprendre chaque étape avant de l'exécuter
+> Version 2.0 — Corrections issues de l'installation réelle
 
 ---
 
@@ -12,10 +13,13 @@
 4. [Pourquoi une clé SSH ?](#4-pourquoi-une-clé-ssh-)
 5. [install-config.yaml — Anatomie complète](#5-install-configyaml--anatomie-complète)
 6. [agent-config.yaml — Anatomie complète](#6-agent-configyaml--anatomie-complète)
-7. [Génération de l'ISO Agent-based](#7-génération-de-liso-agent-based)
-8. [Création de la VM VMware Workstation](#8-création-de-la-vm-vmware-workstation)
-9. [Surveillance de l'installation](#9-surveillance-de-linstallation)
-10. [Validation du cluster](#10-validation-du-cluster)
+7. [IP statique — Réservation DHCP VMware](#7-ip-statique--réservation-dhcp-vmware)
+8. [Configuration DNS — /etc/hosts](#8-configuration-dns--etchosts)
+9. [Génération de l'ISO Agent-based](#9-génération-de-liso-agent-based)
+10. [Création de la VM VMware Workstation](#10-création-de-la-vm-vmware-workstation)
+11. [Surveillance de l'installation](#11-surveillance-de-linstallation)
+12. [Fix PostgreSQL — Assisted Service DB](#12-fix-postgresql--assisted-service-db)
+13. [Validation du cluster](#13-validation-du-cluster)
 
 ---
 
@@ -55,7 +59,7 @@ C'est exactement l'OS utilisé en production chez les grands comptes — Nokia, 
 WSL2 Ubuntu
     │
     ├── 1. install-config.yaml     ← configuration du cluster
-    ├── 2. agent-config.yaml       ← configuration réseau du nœud
+    ├── 2. agent-config.yaml       ← configuration du nœud (hostname, MAC, role)
     │
     ▼
 openshift-install agent create image
@@ -73,7 +77,7 @@ VM boot → Assisted Installer      ← agent embarqué dans l'ISO
     │    applique les ignition configs
     │
     ▼
-OKD SNO opérationnel              ← ~45-75 minutes
+OKD SNO opérationnel              ← ~60-90 minutes
     │
     ▼
 openshift-install agent wait-for install-complete
@@ -101,44 +105,27 @@ C'est le **cerveau de l'installation**. Il fait deux choses :
 - Surveille la progression en temps réel
 - Valide que chaque composant démarre correctement
 
-Sans `openshift-install` → impossible de créer l'ISO, impossible de surveiller l'install.
-
 ### oc (OpenShift CLI)
 
 C'est le **couteau suisse** pour piloter le cluster une fois installé. C'est une extension de `kubectl` avec des commandes spécifiques OpenShift.
 
 ```bash
-# Commandes kubectl standard (fonctionnent avec oc)
 oc get pods -A
 oc get nodes
-oc apply -f manifest.yaml
-
-# Commandes spécifiques OpenShift
-oc get routes -A                    # Routes OpenShift (pas d'équivalent kubectl)
+oc get routes -A                    # Routes OpenShift
 oc get clusterversion               # Version et état du cluster
-oc get co                           # Cluster Operators (composants internes OCP)
-oc adm top nodes                    # Consommation ressources
-oc login https://api.sno.okd.lab:6443 --token=...
+oc get co                           # Cluster Operators
+oc adm top nodes
 ```
-
-Sans `oc` → tu peux utiliser `kubectl`, mais tu perds toutes les commandes spécifiques OpenShift (routes, builds, imagestreams, operators...).
-
-### Pourquoi deux fichiers séparés ?
-
-Historiquement, Red Hat distribue les deux outils séparément car :
-- `oc` est utilisé par les **développeurs** et **ops** au quotidien (léger, ~70 Mo)
-- `openshift-install` est utilisé **une seule fois** lors du bootstrap (lourd, ~400 Mo car il embarque toutes les images de référence)
-
-En production, seul `oc` est installé sur les postes des équipes. `openshift-install` ne sert qu'à l'équipe infra lors du déploiement initial.
 
 ### Pourquoi OKD 4.17.0-okd-scos.0 spécifiquement ?
 
-C'est la **première release stable SCOS** d'OKD 4.17 (le `.0` indique la première release officielle du channel stable). Les versions `4.17.0-0.okd-scos-YYYY-MM-DD` sont des builds nightlies — fonctionnels mais sans garantie de stabilité ni de chemin de mise à jour.
+C'est la **première release stable SCOS** d'OKD 4.17. Les versions `4.17.0-0.okd-scos-YYYY-MM-DD` sont des builds nightlies — fonctionnels mais sans garantie de stabilité.
 
 ```
 4.17.0-okd-scos.0   ← version stable (notre choix ✅)
 4.17.0-okd-scos.1   ← patch stable
-4.17.0-0.okd-scos-2025-02-23-210454  ← nightly (instable ❌ pour un lab)
+4.17.0-0.okd-scos-2025-02-23-210454  ← nightly (instable ❌)
 ```
 
 ---
@@ -149,34 +136,13 @@ C'est la **première release stable SCOS** d'OKD 4.17 (le `.0` indique la premi�
 
 **MTU** (Maximum Transmission Unit) = la taille maximale d'un paquet réseau en octets.
 
-```
-Paquet réseau
-┌─────────────────────────────────────────┐
-│ Header IP │ Header TCP │    Data        │
-│  20 bytes │  20 bytes  │  1460 bytes    │
-└─────────────────────────────────────────┘
-◄────────────────── MTU = 1500 ──────────►
-```
-
-Si un paquet est plus grand que le MTU du réseau, il est **fragmenté** (découpé en morceaux). Sur TLS (HTTPS), cette fragmentation peut corrompre les enregistrements cryptographiques → erreur `bad record mac`.
+Si un paquet est plus grand que le MTU du réseau, il est **fragmenté**. Sur TLS (HTTPS), cette fragmentation peut corrompre les enregistrements cryptographiques → erreur `bad record mac`.
 
 ### Pourquoi WSL2 est affecté ?
 
-WSL2 utilise une interface réseau virtuelle (`eth0`) avec un MTU de **1500 par défaut**. Mais le réseau Windows sous-jacent (Hyper-V virtual switch) a ses propres en-têtes, réduisant l'espace disponible pour les données. Résultat : les gros fichiers (>100 Mo) via TLS échouent aléatoirement.
-
-```
-WSL2 eth0 (MTU 1500)
-    │
-    ▼
-Hyper-V vSwitch (overhead ~40 bytes)
-    │
-    ▼
-Réseau physique Windows
-```
+WSL2 utilise une interface réseau virtuelle (`eth0`) avec un MTU de **1500 par défaut**. Mais le réseau Windows sous-jacent (Hyper-V virtual switch) a ses propres en-têtes, réduisant l'espace disponible. Résultat : les gros fichiers (>100 Mo) via TLS échouent aléatoirement.
 
 ### La solution
-
-Réduire le MTU de WSL2 à **1280** (valeur minimale IPv6, sûre pour tous les réseaux) :
 
 ```bash
 sudo ip link set eth0 mtu 1280
@@ -184,19 +150,9 @@ sudo ip link set eth0 mtu 1280
 
 Cela force des paquets plus petits → moins de fragmentation → plus d'erreurs TLS.
 
-Pour rendre permanent (sinon perdu au redémarrage WSL) :
-
-```bash
-sudo tee /etc/profile.d/fix-mtu.sh << 'EOF'
-#!/bin/bash
-sudo ip link set eth0 mtu 1280 2>/dev/null
-EOF
-sudo chmod +x /etc/profile.d/fix-mtu.sh
-```
-
 ### Pourquoi PowerShell contourne le problème
 
-PowerShell télécharge directement via le stack réseau Windows, sans passer par la couche Hyper-V de WSL2. Pas de double encapsulation → pas de fragmentation → pas d'erreur TLS. C'est la méthode **la plus propre** pour les gros téléchargements depuis WSL2.
+PowerShell télécharge directement via le stack réseau Windows, sans passer par la couche Hyper-V de WSL2. Pas de double encapsulation → pas de fragmentation. C'est la méthode recommandée pour les gros téléchargements depuis un hôte WSL2.
 
 ---
 
@@ -204,11 +160,10 @@ PowerShell télécharge directement via le stack réseau Windows, sans passer pa
 
 ### SCOS est immuable, pas de mot de passe
 
-Sur un OS standard (Ubuntu, CentOS), tu peux te connecter avec un mot de passe root via la console. SCOS interdit ça :
-
+Sur SCOS :
 - Pas de root password configuré
 - Pas d'accès console avec mot de passe
-- Filesystem système en lecture seule (impossible de modifier `/etc/shadow` après boot)
+- Filesystem système en lecture seule
 
 La **seule façon d'accéder** au nœud SCOS est SSH avec une clé publique.
 
@@ -221,142 +176,86 @@ install-config.yaml
           ▼
 openshift-install génère master.ign   ← fichier Ignition JSON
           │
-          contient :
-          {
-            "passwd": {
-              "users": [{
-                "name": "core",
-                "sshAuthorizedKeys": ["ssh-ed25519 AAAA..."]
-              }]
-            }
-          }
+          ▼
+SCOS boot → Ignition configure ~/.ssh/authorized_keys pour user "core"
           │
           ▼
-SCOS boot → Ignition s'exécute au premier démarrage
-          │
-          ▼
-~/.ssh/authorized_keys configuré pour l'user "core"
-          │
-          ▼
-ssh -i ~/.ssh/okd-sno core@192.168.100.10  ✅
+ssh -i ~/.ssh/okd-sno core@192.168.241.10  ✅
 ```
 
-### Pourquoi ed25519 et pas RSA ?
-
-| Algorithme | Sécurité | Taille clé | Performance | Recommandation |
-|-----------|---------|-----------|------------|---------------|
-| RSA 2048 | ⚠️ Déprécié | 2048 bits | Lent | ❌ Éviter |
-| RSA 4096 | ✅ | 4096 bits | Très lent | ⚠️ Acceptable |
-| ECDSA | ✅ | 256 bits | Rapide | ✅ Bien |
-| **ed25519** | ✅ Meilleur | 256 bits | Très rapide | ✅ **Standard actuel** |
-
-`ed25519` utilise les courbes de Twisted Edwards — résistant aux attaques par canal auxiliaire, clé courte, signature rapide. C'est le standard recommandé par ANSSI, NIST, et tous les cloud providers (AWS, Azure, GCP).
-
-### Usage en pratique
+### Génération
 
 ```bash
-# Générer la clé
 ssh-keygen -t ed25519 -C "okd-sno-lab" -f ~/.ssh/okd-sno -N ""
-#           │           │               │                  │
-#           │           │               │                  └── pas de passphrase
-#           │           │               └── fichier de sortie
-#           │           └── commentaire (dans la clé publique)
-#           └── algorithme
 
-# Résultat
-~/.ssh/okd-sno      ← clé PRIVÉE (ne jamais partager !)
-~/.ssh/okd-sno.pub  ← clé PUBLIQUE (va dans install-config.yaml)
-
-# Se connecter au nœud après install
-ssh -i ~/.ssh/okd-sno core@192.168.100.10
+# ~/.ssh/okd-sno     ← clé PRIVÉE (ne jamais partager !)
+# ~/.ssh/okd-sno.pub ← clé PUBLIQUE (va dans install-config.yaml)
 ```
 
 ---
 
 ## 5. install-config.yaml — Anatomie complète
 
-C'est le **fichier de configuration principal** du cluster. Il décrit ce qu'on veut construire.
-
 ```yaml
 apiVersion: v1
 baseDomain: okd.lab
-# ↑ Domaine de base. Toutes les URLs du cluster seront sous ce domaine :
-#   API    : api.sno.okd.lab
-#   Console: console-openshift-console.apps.sno.okd.lab
-#   Apps   : *.apps.sno.okd.lab
+# Toutes les URLs du cluster seront sous ce domaine :
+#   API     : api.sno.okd.lab:6443
+#   Console : console-openshift-console.apps.sno.okd.lab
 
 metadata:
   name: sno
-# ↑ Nom du cluster. Forme le sous-domaine :
+# Nom du cluster → sous-domaine :
 #   api.SNO.okd.lab
 #   *.apps.SNO.okd.lab
 
 compute:
   - name: worker
     replicas: 0
-# ↑ En SNO, 0 workers séparés. Le master est aussi schedulable (MastersSchedulable: true)
+# En SNO : 0 workers séparés. Le master est schedulable.
 
 controlPlane:
   name: master
   replicas: 1
-# ↑ 1 seul master = SNO. Pour un compact cluster : replicas: 3
+# 1 seul master = SNO
 
 networking:
   clusterNetwork:
     - cidr: 10.128.0.0/14
       hostPrefix: 23
-  # ↑ Réseau interne des pods. Chaque nœud reçoit un /23 (512 IPs pour ses pods)
-  #   Ce réseau est interne au cluster, invisible depuis l'extérieur
+  # Réseau interne des pods — interne au cluster, invisible depuis l'extérieur
 
   machineNetwork:
-    - cidr: 192.168.100.0/24
-  # ↑ Réseau physique de tes VMs (VMnet8 NAT)
-  #   L'IP du nœud SNO DOIT être dans ce CIDR
+    - cidr: 192.168.241.0/24
+  # ⚠️ Réseau physique de la VM (VMnet8)
+  # L'IP du nœud DOIT être dans ce CIDR
 
   networkType: OVNKubernetes
-  # ↑ CNI (Container Network Interface) plugin
-  #   OVNKubernetes = Open Virtual Network, le CNI standard OpenShift 4.12+
-  #   Remplace l'ancien OpenShiftSDN
+  # CNI standard OpenShift 4.12+
 
   serviceNetwork:
     - 172.30.0.0/16
-  # ↑ Réseau des Services Kubernetes (ClusterIP)
-  #   Virtuel, géré par kube-proxy/OVN, invisible depuis l'extérieur
+  # Réseau des Services Kubernetes (ClusterIP) — virtuel
 
 platform:
   none: {}
-# ↑ Pas de cloud provider, pas d'API hyperviseur
-#   = UPI pur, tu gères l'infra toi-même
-#   C'est le mode utilisé sur baremetal en prod
+# UPI pur — pas de cloud provider, pas d'API hyperviseur
+# Mode utilisé sur baremetal en production
 
 pullSecret: '{"auths":{"fake":{"auth":"aGVsbG86d29ybGQ="}}}'
-# ↑ OKD (OSS) ne nécessite pas de vrai pull secret Red Hat
-#   Ce JSON fakr est le standard pour OKD — il bypass la vérification
+# OKD ne nécessite pas de vrai pull secret Red Hat
+# Ce JSON fake est le standard pour OKD
 
 sshKey: |
   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMfYWQYhU/AfkK5U+URfW5Huvg4BeZUKlnKZSlYW7VqW okd-sno-lab
-# ↑ Ta clé publique (cat ~/.ssh/okd-sno.pub)
-#   Injectée dans SCOS via Ignition pour accès SSH
+# Clé publique injectée dans SCOS via Ignition
 ```
-
-### Champs critiques vs optionnels
-
-| Champ | Critique | Impact si mal configuré |
-|-------|---------|------------------------|
-| `baseDomain` | ✅ | Toutes les URLs cassées |
-| `metadata.name` | ✅ | Sous-domaine incorrect |
-| `machineNetwork.cidr` | ✅ | IP du nœud rejetée |
-| `networkType` | ✅ | Pas de réseau pods |
-| `platform` | ✅ | Installer cherche une API cloud |
-| `sshKey` | ✅ | Nœud inaccessible post-install |
-| `pullSecret` | ✅ | Impossible de pull les images |
-| `replicas` worker/master | ✅ | Mauvaise topologie |
 
 ---
 
 ## 6. agent-config.yaml — Anatomie complète
 
-Alors que `install-config.yaml` décrit le cluster, `agent-config.yaml` décrit la **configuration réseau physique** des nœuds.
+> ⚠️ **Différences importantes par rapport aux guides génériques VMware** — issues de l'installation réelle sur VMware Workstation Pro 17.
 
 ```yaml
 apiVersion: v1alpha1
@@ -364,250 +263,518 @@ kind: AgentConfig
 metadata:
   name: sno
 
-rendezvousIP: 192.168.100.10
-# ↑ IP du nœud "rendez-vous" — en SNO, c'est l'unique nœud
-#   C'est l'IP que l'agent bootstrap utilisera pour se contacter
-#   DOIT correspondre à l'IP statique configurée ci-dessous
+rendezvousIP: 192.168.241.10
+# IP du nœud "rendez-vous" — en SNO, c'est l'unique nœud
+# L'agent bootstrap utilise cette IP pour se contacter
+# DOIT correspondre à l'IP réservée dans vmnetdhcp.conf
 
 hosts:
   - hostname: sno-master
     role: master
-    # ↑ Rôle du nœud. En SNO : master (qui est aussi worker)
 
     interfaces:
-      - name: ens33
-        macAddress: "00:0C:29:xx:xx:xx"
-      # ↑ Liaison interface → adresse MAC
-      #   VMware nomme toujours la première interface "ens33"
-      #   La MAC est visible dans VM Settings → Network Adapter → Advanced
-
-    networkConfig:
-      interfaces:
-        - name: ens33
-          type: ethernet
-          state: up
-          ipv4:
-            enabled: true
-            dhcp: false
-            # ↑ IP STATIQUE obligatoire pour OKD
-            #   DHCP = IP changeante = DNS cassé = cluster cassé
-            address:
-              - ip: 192.168.100.10
-                prefix-length: 24
-                # ↑ /24 = 255.255.255.0 = subnet VMnet8
-
-      dns-resolver:
-        config:
-          server:
-            - 192.168.100.2
-            # ↑ Gateway VMnet8 (par défaut x.x.x.2 sur VMware)
-            #   Ou l'IP WSL si tu fais tourner dnsmasq dessus
-
-      routes:
-        config:
-          - destination: 0.0.0.0/0
-            next-hop-address: 192.168.100.2
-            next-hop-interface: ens33
-            # ↑ Route par défaut = tout le trafic sortant passe par la gateway VMnet8
+      - name: ens160
+        macAddress: "00:50:56:27:c8:0b"
+      # ⚠️ L'interface s'appelle ens160 (adaptateur vmxnet3), PAS ens33
+      # ens33 = ancien adaptateur e1000 — vmxnet3 génère ens160
+      # La MAC est visible dans VM Settings → Network Adapter → Advanced
 ```
 
-### Pourquoi une IP statique ?
+### Pourquoi PAS de networkConfig ?
 
-OpenShift génère des certificats TLS et des entrées DNS basés sur l'IP du nœud lors de l'installation. Si l'IP change (DHCP), les certificats deviennent invalides, les routes DNS cassent, et le cluster devient inutilisable.
+Les guides officiels OpenShift incluent une section `networkConfig` avec nmstate pour configurer l'IP statique directement dans l'ISO :
 
-En production, les nœuds OpenShift sont **toujours** en IP statique, que ce soit en baremetal, VMware vSphere, ou cloud privé.
+```yaml
+# ❌ NE PAS UTILISER SUR WSL2
+networkConfig:
+  interfaces:
+    - name: ens160
+      ipv4:
+        dhcp: false
+        address:
+          - ip: 192.168.241.10
+```
+
+**Problème** : `networkConfig` requiert `nmstatectl` + NetworkManager. NetworkManager n'est pas disponible dans WSL2. La commande `openshift-install agent create image` échoue avec :
+
+```
+AttributeError: 'NoneType' object has no attribute 'SettingBond'
+ERROR failed to generate asset "NMState Config": staticNetwork configuration is not valid
+```
+
+**Solution** : ne pas utiliser `networkConfig` et configurer l'IP statique côté VMware (section 7).
+
+### Pourquoi l'IP statique est critique
+
+OpenShift génère des certificats TLS et des entrées DNS basés sur l'IP du nœud lors de l'installation. Si l'IP change (DHCP), les certificats deviennent invalides et le cluster devient inutilisable.
+
+De plus, l'agent vérifie que son IP correspond à `rendezvousIP`. Si l'IP DHCP est différente (ex: `.134` au lieu de `.10`), l'agent affiche :
+
+```
+This host is not the rendezvous host. The rendezvous host is at 192.168.241.10
+```
+
+Et les services d'installation ne démarrent pas.
 
 ---
 
-## 7. Génération de l'ISO Agent-based
+## 7. IP statique — Réservation DHCP VMware
+
+### Le mécanisme
+
+VMware Workstation gère son propre serveur DHCP via `vmnetdhcp.conf`. On peut y ajouter une **réservation statique** : "cette MAC → toujours cette IP". C'est transparent pour la VM — elle fait une requête DHCP normale et reçoit toujours `.10`.
+
+Cette approche est :
+- **Compatible avec nmstate absent** dans WSL2
+- **Persistante** à travers les reboots de la VM
+- **Non intrusive** sur les autres VMs VMware (seule la MAC `00:50:56:27:c8:0b` est concernée)
+
+### Procédure
+
+Depuis PowerShell Windows (administrateur) :
+
+```powershell
+notepad "C:\ProgramData\VMware\vmnetdhcp.conf"
+```
+
+Ajouter avant le dernier `# End` :
+
+```
+host okd-sno-master {
+    hardware ethernet 00:50:56:27:c8:0b;
+    fixed-address 192.168.241.10;
+}
+```
+
+Résultat final :
+
+```
+host VMnet8 {
+    hardware ethernet 00:50:56:C0:00:08;
+    fixed-address 192.168.241.1;
+    ...
+}
+host okd-sno-master {
+    hardware ethernet 00:50:56:27:c8:0b;
+    fixed-address 192.168.241.10;
+}
+# End
+```
+
+Redémarrer le service DHCP VMware :
+
+```powershell
+Restart-Service VMnetDHCP
+```
+
+### Validation
+
+Après le premier boot de la VM, vérifier sur la console VMware :
+
+```
+ens160: 192.168.241.10       ← IP correcte ✅
+This host (192.168.241.10) is the rendezvous host.  ← confirmation ✅
+```
+
+---
+
+## 8. Configuration DNS — /etc/hosts
+
+### Pourquoi /etc/hosts plutôt que dnsmasq ?
+
+dnsmasq est l'approche documentée dans les guides OKD. Mais sur une machine avec **Tailscale**, dnsmasq génère des conflits complexes :
+
+- Tailscale écrase `/etc/resolv.conf` via son propre daemon DNS
+- Port 53 partagé entre dnsmasq et systemd-resolved
+- `tailscale set --accept-dns=false` désactive le MagicDNS (fonctionnalité utile)
+
+**`/etc/hosts` est plus simple, plus robuste, et Tailscale ne le touche jamais** :
+
+```bash
+sudo tee -a /etc/hosts << 'EOF'
+192.168.241.10 api.sno.okd.lab api-int.sno.okd.lab console-openshift-console.apps.sno.okd.lab oauth-openshift.apps.sno.okd.lab
+EOF
+```
+
+### ⚠️ nslookup vs ping
+
+`nslookup` et `dig` **bypasse** `/etc/hosts` et interroge directement le DNS. Pour valider, utiliser `ping` :
+
+```bash
+# ❌ Ne pas utiliser pour valider /etc/hosts
+nslookup api.sno.okd.lab
+# → NXDOMAIN (normal — bypasse /etc/hosts)
+
+# ✅ Utiliser ping
+ping -c1 api.sno.okd.lab
+# PING api.sno.okd.lab (192.168.241.10) ✅
+```
+
+### Accès depuis Windows
+
+Pour accéder à la console web depuis le navigateur Windows, ajouter les mêmes entrées dans :
+
+```
+C:\Windows\System32\drivers\etc\hosts
+```
+
+```
+192.168.241.10 api.sno.okd.lab console-openshift-console.apps.sno.okd.lab oauth-openshift.apps.sno.okd.lab
+```
+
+### Nettoyage en fin de projet
+
+```bash
+# WSL2
+sudo sed -i '/okd\.lab/d' /etc/hosts
+
+# Windows (PowerShell admin)
+(Get-Content C:\Windows\System32\drivers\etc\hosts) |
+  Where-Object { $_ -notmatch 'okd\.lab' } |
+  Set-Content C:\Windows\System32\drivers\etc\hosts
+```
+
+---
+
+## 9. Génération de l'ISO Agent-based
 
 ### Qu'est-ce que l'Agent-based Installer ?
 
-C'est une méthode d'installation introduite dans OpenShift 4.12. Au lieu de nécessiter une infrastructure de bootstrap externe (bootstrap VM, S3 bucket, Route53...), l'installer embarque tout dans une **ISO bootable**.
+L'ISO contient tout le nécessaire pour bootstrapper le cluster sans infrastructure externe :
+- Kernel Linux minimal (SCOS)
+- Agent d'installation (Assisted Installer en mode local)
+- Tes configurations compilées en ignition configs
 
-L'ISO contient :
-- Un kernel Linux minimal
-- L'agent d'installation (Assisted Installer en mode local)
-- Tes configurations `install-config.yaml` et `agent-config.yaml`
-- Les ignition configs générés
-
-Au boot de la VM, l'agent :
-1. Détecte le hardware (CPU, RAM, disks)
-2. Configure le réseau selon `agent-config.yaml`
+Au boot, l'agent :
+1. Détecte le hardware
+2. Configure le réseau
 3. Démarre les composants OpenShift
-4. S'auto-bootstrap sans infrastructure externe
+4. S'auto-bootstrap sans VM bootstrap séparée, sans S3, sans API cloud
 
-### Pourquoi c'est parfait pour VMware Workstation
-
-Les méthodes d'installation traditionnelles OKD/OCP nécessitent :
-- Une VM bootstrap séparée
-- Un serveur DHCP/PXE
-- Un serveur HTTP pour les ignition configs
-- Une API cloud (vCenter, AWS, Azure...)
-
-L'Agent-based Installer **élimine tout ça**. Tu génères une ISO, tu la montes dans VMware, et c'est parti. C'est exactement le mode utilisé pour les installations **baremetal** en production — très valorisé sur les missions grands comptes.
+C'est le mode utilisé pour les installations **baremetal** en production — valorisé sur les missions grands comptes.
 
 ### La commande
 
 ```bash
-# ⚠️ IMPORTANT : openshift-install CONSUME et SUPPRIME install-config.yaml
-# Toujours travailler depuis une COPIE
+mkdir -p ~/work/okd-sno-install
 
-mkdir -p ~/okd-sno-install
-cp /mnt/d/okd-lab/install/install-config.yaml ~/okd-sno-install/
-cp /mnt/d/okd-lab/install/agent-config.yaml ~/okd-sno-install/
+# ⚠️ openshift-install CONSUME et SUPPRIME install-config.yaml et agent-config.yaml
+# Toujours travailler depuis des COPIES, garder les originaux dans le repo Git
+cp ~/work/Openshift-OKD-SNO-Airgap-workstation/install/install-config.yaml ~/work/okd-sno-install/
+cp ~/work/Openshift-OKD-SNO-Airgap-workstation/install/agent-config.yaml ~/work/okd-sno-install/
 
-# Générer l'ISO
-openshift-install agent create image --dir ~/okd-sno-install/
-
-# Résultat : ~/okd-sno-install/agent.x86_64.iso (~1 Go)
+openshift-install agent create image \
+  --dir ~/work/okd-sno-install/ --log-level=info
 ```
 
-Après cette commande, `install-config.yaml` et `agent-config.yaml` **disparaissent** du répertoire — ils sont consommés pour générer l'ISO. C'est normal, garde tes originaux dans le repo Git.
+### Output attendu
+
+```
+WARNING Release Image Architecture not detected   ← Normal pour OKD
+INFO The rendezvous host IP (node0 IP) is 192.168.241.10
+INFO Extracting base ISO from release payload
+INFO Using cached base ISO                        ← Cache utilisé si déjà téléchargé
+INFO Generated ISO at ~/work/okd-sno-install/agent.x86_64.iso
+```
+
+![ISO Generated](screenshots/iso-generated.png)
+
+### Copier vers Windows et monter dans VMware
+
+```bash
+cp ~/work/okd-sno-install/agent.x86_64.iso /mnt/d/okd-lab/install/
+```
+
+```
+VM Settings → CD/DVD (IDE)
+→ Use ISO image file : D:\okd-lab\install\agent.x86_64.iso
+→ Connect at power on : ✅
+```
+
+![CD/DVD Settings](screenshots/vm-cdrom-iso.png)
 
 ---
 
-## 8. Création de la VM VMware Workstation
+## 10. Création de la VM VMware Workstation
 
-### Specs de la VM
+### Specs
 
 | Paramètre | Valeur | Raison |
 |-----------|--------|--------|
-| OS Guest | RHEL 9 64-bit | SCOS est basé sur CentOS Stream 9 |
-| vCPU | 8 | Minimum OKD SNO : 8 vCPUs |
-| RAM | 24 576 MB | Minimum OKD SNO : 16 Go, 24 Go pour confort |
+| OS Guest | CentOS 8 64-bit | SCOS basé sur CentOS Stream — le plus proche disponible |
+| vCPU | 8 | Minimum OKD SNO |
+| RAM | 24 576 MB | Confort + etcd |
 | Disk | 120 Go thin | `/var` OpenShift peut grossir significativement |
-| Réseau | VMnet8 NAT | Même subnet que WSL2 pour accès HAProxy |
-| Firmware | UEFI | SCOS ne supporte pas le BIOS legacy |
-| Secure Boot | Désactivé | SCOS kernel OKD non signé Microsoft |
+| Réseau | VMnet8 NAT | Même subnet que WSL2 |
+| Adaptateur réseau | vmxnet3 | Génère l'interface `ens160` dans SCOS |
+| Firmware | UEFI | SCOS ne supporte pas BIOS legacy |
+| Secure Boot | ❌ Désactivé | Kernel OKD non signé |
 
-### Pourquoi thin provisioning ?
+### ⚠️ Paramètres critiques
 
-**Thick provisioning** : VMware alloue immédiatement 120 Go sur ton disque D:
-**Thin provisioning** : VMware alloue uniquement l'espace réellement écrit (commence à ~5 Go, grandit selon besoin)
-
-Avec 528 Go disponibles, thin provisioning te permet de créer la VM sans sacrifier 120 Go immédiatement. La VM ne prendra que l'espace dont elle a besoin.
-
-### L'option disk.EnableUUID
-
-Cette option VMware est **critique pour OKD** :
+**1. UEFI + Secure Boot OFF**
 
 ```
-VM Settings → Options → Advanced → Configuration Parameters
-→ Ajouter : disk.EnableUUID = TRUE
+VM Settings → Options → Advanced
+→ Firmware type : UEFI ✅
+→ Enable secure boot : décoché ✅
 ```
 
-Sans cette option, SCOS ne peut pas identifier de façon unique les disques (nécessaire pour les CSI drivers de stockage comme le vSphere CSI ou Longhorn). L'installation peut compléter mais le stockage persistant ne fonctionnera pas.
+**2. Boot order — forcer le CD en premier**
+
+VMware UEFI n'a pas d'interface graphique de boot order. Éditer le VMX :
+
+```powershell
+notepad "D:\okd-lab\vm\okd-sno-master.vmx"
+```
+
+Ajouter après `firmware = "efi"` :
+
+```
+bios.bootOrder = "cdrom,hdd"
+```
+
+Supprimer le fichier nvram pour reset UEFI (obligatoire si la VM a déjà booté) :
+
+```powershell
+Remove-Item "D:\okd-lab\vm\okd-sno-master.nvram" -ErrorAction SilentlyContinue
+```
+
+**3. Récupérer la MAC address**
+
+```
+VM Settings → Network Adapter → Advanced → MAC Address
+→ Copier la valeur exacte (ex: 00:50:56:27:C8:0B)
+→ Mettre à jour agent-config.yaml (en minuscules)
+```
+
+![VM Settings Hardware](screenshots/vm-10-settings-hardware.png)
 
 ---
 
-## 9. Surveillance de l'installation
+## 11. Surveillance de l'installation
 
-### Deux phases à surveiller
+### Démarrer la VM
 
-**Phase Bootstrap** : le nœud SNO se bootstrap lui-même
+Power On. Sur la console VMware, attendre :
 
-```bash
-openshift-install agent wait-for bootstrap-complete \
-  --dir ~/okd-sno-install/ \
-  --log-level=info
+```
+This host (192.168.241.10) is the rendezvous host.
 ```
 
-Cette commande surveille jusqu'à ce que :
-- L'API server soit disponible sur `https://api.sno.okd.lab:6443`
-- etcd soit opérationnel
-- Le control plane soit stable
+![Boot Rendezvous Host](screenshots/boot-rendezvous-host.png)
 
-**Phase Install Complete** : tous les operators démarrent
+> Si la console affiche **"This host is not the rendezvous host"** avec une IP différente → réservation DHCP VMware non appliquée. Vérifier `vmnetdhcp.conf` et relancer `Restart-Service VMnetDHCP`.
+
+### Nettoyer known_hosts (si reboot VM)
+
+À chaque boot ISO, SCOS génère de nouvelles clés SSH → SSH refuse la connexion avec "host key changed" :
+
+```bash
+ssh-keygen -f '/home/zerotrust/.ssh/known_hosts' -R '192.168.241.10'
+```
+
+### Lancer le wait-for
 
 ```bash
 openshift-install agent wait-for install-complete \
-  --dir ~/okd-sno-install/ \
-  --log-level=info
+  --dir ~/work/okd-sno-install/ --log-level=info
 ```
 
-Cette commande surveille jusqu'à ce que :
-- Tous les Cluster Operators soient `Available=True`
-- La console web soit accessible
-- L'installation soit déclarée complète
+### Timeline des messages
 
-### Ce qui se passe sous le capot
+| Message | Signification |
+|---------|---------------|
+| `Cluster is not ready for install` | Services en démarrage |
+| `Host NTP is synced` | Validation NTP passée |
+| `Host is ready to be installed` | Host validé |
+| `Cluster is ready for install` | Prêt à installer |
+| `preparing-for-installation` | Pull images |
+| `Installing: bootstrap` | Bootstrap Kubernetes |
+| `Waiting for bootkube` | Démarrage etcd + API server |
+| `Bootstrap is complete` | Control plane opérationnel |
+| `Install complete!` | ✅ Cluster prêt |
 
-```
-Minute 0-5   : Boot SCOS, détection hardware
-Minute 5-15  : Configuration réseau, pull images depuis quay.io
-Minute 15-30 : Démarrage etcd, API server, MCS
-Minute 30-45 : Bootstrap des Cluster Operators (console, monitoring, ingress...)
-Minute 45-75 : Finalisation, validation, nettoyage bootstrap
+![Wait-for Bootkube](screenshots/wait-for-bootkube.png)
+
+### ⚠️ Validation NTP
+
+Si le message NTP persiste plus de 5 minutes :
+
+```bash
+ssh -i ~/.ssh/okd-sno core@192.168.241.10 "sudo chronyc makestep"
 ```
 
 ---
 
-## 10. Validation du cluster
+## 12. Fix PostgreSQL — Assisted Service DB
+
+> ⚠️ **Bug connu OKD 4.17 SNO sur VMware** — non documenté dans les guides officiels.
+
+### Symptôme
+
+Si les services d'installation ne démarrent pas automatiquement après le boot de l'ISO :
+
+```bash
+ssh -i ~/.ssh/okd-sno core@192.168.241.10 \
+  "sudo journalctl -u assisted-service-db -n 5 --no-pager"
+```
+
+```
+FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.5432.lock": No such file or directory
+```
+
+### Cause
+
+Le container PostgreSQL (`assisted-service-db`) démarre avec `--user=postgres` mais le répertoire `/var/run/postgresql/` n'existe pas dans le container. `pg_ctl` ne peut pas créer le socket de verrouillage.
+
+C'est un bug du container OKD 4.17 — l'entrypoint `start_db.sh` ne crée pas ce répertoire avant de lancer PostgreSQL.
+
+### Fix — Script wrapper Podman
+
+```bash
+ssh -i ~/.ssh/okd-sno core@192.168.241.10 << 'ENDSSH'
+sudo tee /usr/local/bin/start_db_wrapper.sh > /dev/null << 'EOF'
+#!/bin/bash
+source /usr/local/share/assisted-service/agent-images.env
+exec /usr/bin/podman run --net host --user=postgres \
+  --cidfile=$1 --cgroups=no-conmon --log-driver=journald \
+  --rm --pod-id-file=$2 \
+  --sdnotify=conmon --replace -d --name=assisted-db \
+  --env-file=/usr/local/share/assisted-service/assisted-db.env \
+  --tmpfs /var/run/postgresql:rw,mode=0777 \
+  ${SERVICE_IMAGE} /bin/bash start_db.sh
+EOF
+sudo chmod +x /usr/local/bin/start_db_wrapper.sh
+
+sudo mkdir -p /etc/systemd/system/assisted-service-db.service.d/
+sudo tee /etc/systemd/system/assisted-service-db.service.d/fix-initdb.conf > /dev/null << 'EOF'
+[Service]
+ExecStartPre=
+ExecStartPre=/bin/rm -f %t/%n.ctr-id
+ExecStart=
+ExecStart=/usr/local/bin/start_db_wrapper.sh %t/%n.ctr-id %t/assisted-service-pod.pod-id
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart assisted-service-db
+ENDSSH
+```
+
+### Pourquoi `--tmpfs /var/run/postgresql` ?
+
+`--tmpfs` monte un filesystem temporaire en mémoire sur le chemin spécifié, **à l'intérieur du container**. Ce répertoire :
+- Est créé automatiquement au démarrage du container
+- Appartient à l'UID/GID correct (`mode=0777` pour postgres)
+- Disparaît à l'arrêt du container (pas de persistance nécessaire — c'est un socket)
+
+### Re-enregistrement après fix
+
+```bash
+ssh -i ~/.ssh/okd-sno core@192.168.241.10 \
+  "sudo systemctl restart assisted-service && sleep 5 && \
+   sudo systemctl start agent-register-cluster && sleep 10 && \
+   sudo systemctl start agent-register-infraenv && sleep 5 && \
+   sudo systemctl restart agent"
+```
+
+---
+
+## 13. Validation du cluster
+
+### Message de succès
+
+```
+INFO Install complete!
+INFO To access the cluster as the system:admin user:
+     export KUBECONFIG=~/work/okd-sno-install/auth/kubeconfig
+INFO Access the OpenShift web-console here:
+     https://console-openshift-console.apps.sno.okd.lab
+INFO Login to the console with user: "kubeadmin"
+     password: xxxxx-xxxxx-xxxxx-xxxxx
+```
 
 ### Commandes de vérification
 
 ```bash
-# Charger le kubeconfig admin
-export KUBECONFIG=~/okd-sno-install/auth/kubeconfig
+export KUBECONFIG=~/work/okd-sno-install/auth/kubeconfig
 
-# 1. État du nœud
+# État du nœud
 oc get nodes
 # NAME         STATUS   ROLES                         AGE   VERSION
 # sno-master   Ready    control-plane,master,worker   1h    v1.30.x
-# ↑ ROLES = control-plane,master,worker → confirmation SNO correct
+# ROLES = control-plane,master,worker → confirmation SNO ✅
 
-# 2. Version du cluster
+# Version du cluster
 oc get clusterversion
-# AVAILABLE=True, PROGRESSING=False → cluster stable
+# AVAILABLE=True, PROGRESSING=False → cluster stable ✅
 
-# 3. Cluster Operators (composants internes)
+# Cluster Operators (~30, tous doivent être Available)
 oc get co
-# Tous doivent être : AVAILABLE=True, PROGRESSING=False, DEGRADED=False
-# ~30 operators au total
 
-# 4. Pods système
+# Pods en erreur (doit être vide)
 oc get pods -A | grep -v Running | grep -v Completed
-# Ne doit rien afficher → tous les pods tournent
 
-# 5. URL console
-oc whoami --show-console
+# Accès SSH nœud
+ssh -i ~/.ssh/okd-sno core@192.168.241.10
 ```
 
-### Accès à la console web
+### Accès console web
 
 ```
 URL      : https://console-openshift-console.apps.sno.okd.lab
 User     : kubeadmin
-Password : cat ~/okd-sno-install/auth/kubeadmin-password
+Password : cat ~/work/okd-sno-install/auth/kubeadmin-password
 ```
 
-Le `kubeadmin` est un **compte temporaire** créé uniquement pour le bootstrap initial. En production, on le supprime après avoir configuré un Identity Provider (dans notre cas, Keycloak en Phase 2).
+> ⚠️ `kubeadmin` est un compte temporaire de bootstrap. Il sera supprimé en Phase 2 après configuration de Keycloak SSO.
 
 ---
 
 ## Récapitulatif des dépendances
 
 ```
-D:\okd-lab\
+Repo Git :  ~/work/Openshift-OKD-SNO-Airgap-workstation/
+├── install/
+│   ├── install-config.yaml    ← originaux (ne jamais supprimer)
+│   └── agent-config.yaml      ← interface ens160, MAC 00:50:56:27:c8:0b
+├── scripts/
+│   └── fix-assisted-db.sh     ← fix bug PostgreSQL socket OKD 4.17
+
+VMware :  D:\okd-lab\
 ├── install\
-│   ├── openshift-install          → génère l'ISO + surveille l'install
-│   ├── oc                         → pilote le cluster post-install
-│   ├── install-config.yaml        → config cluster (conserve une copie !)
-│   └── agent-config.yaml          → config réseau nœud (conserve une copie !)
-│
-~/.ssh/
-├── okd-sno                        → clé privée (accès SSH nœud)
-└── okd-sno.pub                    → clé publique (dans install-config.yaml)
-│
-~/okd-sno-install/                 → répertoire de travail install
-├── agent.x86_64.iso               → ISO à monter dans VMware
+│   └── agent.x86_64.iso       ← ISO générée, à monter dans VMware
+└── vm\okd-sno-master\
+    └── okd-sno-master.vmx     ← bios.bootOrder = "cdrom,hdd" ajouté
+
+WSL2 :  ~/work/okd-sno-install/
 └── auth/
-    ├── kubeconfig                 → credentials admin cluster
-    └── kubeadmin-password         → mot de passe console web
+    ├── kubeconfig             ← export KUBECONFIG=...
+    └── kubeadmin-password     ← mot de passe console
+
+SSH :  ~/.ssh/
+├── okd-sno                    ← clé privée (accès nœud SCOS)
+└── okd-sno.pub                ← dans install-config.yaml
+
+Windows :  C:\ProgramData\VMware\vmnetdhcp.conf
+└── host okd-sno-master { fixed-address 192.168.241.10; }
 ```
 
 ---
 
+## Problèmes connus
+
+| Symptôme | Cause | Solution |
+|----------|-------|----------|
+| `AttributeError: 'NoneType' object has no attribute 'SettingBond'` | nmstatectl cassé dans WSL2 | Supprimer `networkConfig` de agent-config.yaml |
+| IP VM = `.134` au lieu de `.10` | Pas de réservation DHCP | Ajouter entrée dans `vmnetdhcp.conf` |
+| "This host is not the rendezvous host" | IP DHCP ≠ rendezvousIP | Réservation DHCP + `Restart-Service VMnetDHCP` |
+| `assisted-service-db` crash en boucle | Bug socket `/var/run/postgresql` | Section 12 — wrapper `--tmpfs` |
+| `nslookup api.sno.okd.lab` → NXDOMAIN | nslookup bypasse /etc/hosts | Normal — utiliser `ping` |
+| SSH "host key changed" après reboot | SCOS regénère les clés à chaque boot ISO | `ssh-keygen -R 192.168.241.10` |
+| NTP validation bloquée | Démarrage lent chrony | `chronyc makestep` sur la VM |
+
+---
+
 *Document généré dans le cadre du projet `Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation`*
-*Phase 1 — Bootstrap OKD SNO sur VMware Workstation*
+*Phase 1 — Bootstrap OKD SNO sur VMware Workstation — Version 2.0 — Mars 2026*
