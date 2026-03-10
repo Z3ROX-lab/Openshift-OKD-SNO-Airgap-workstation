@@ -4,15 +4,18 @@
 # =============================================================================
 # Ce script :
 #   1. Fixe le MTU WSL2 (évite les erreurs TLS sur les gros downloads)
-#   2. Installe dnsmasq si absent
-#   3. Crée la config DNS pour *.okd.lab → 192.168.241.10
-#   4. Désactive systemd-resolved (libère le port 53)
-#   5. Configure dnsmasq avec upstream DNS (Tailscale + Google)
-#   6. Configure resolv.conf pour pointer sur dnsmasq
+#   2. Désactive le DNS override Tailscale (accès distant Tailscale non affecté)
+#   3. Installe dnsmasq si absent
+#   4. Crée la config DNS pour *.okd.lab → 192.168.241.10
+#   5. Désactive systemd-resolved (libère le port 53)
+#   6. Configure dnsmasq avec upstream DNS (Tailscale + Google)
+#   7. Configure resolv.conf pour pointer sur dnsmasq
+#   8. Verrouille resolv.conf (chattr +i) contre toute réécriture
 #
 # Compatibilité Tailscale : le DNS Tailscale (100.100.100.100) est
 # ajouté comme upstream — dnsmasq forward tout ce qui n'est pas
-# *.okd.lab vers Tailscale puis 8.8.8.8 en fallback
+# *.okd.lab vers Tailscale puis 8.8.8.8 en fallback.
+# L'accès distant SSH/RDP via Tailscale reste 100% fonctionnel.
 #
 # Pour revenir à la config par défaut : ./restore-dns-default.sh
 # =============================================================================
@@ -41,11 +44,23 @@ echo ""
 # 1. Fix MTU WSL2
 # -----------------------------------------------------------------------------
 log "Fix MTU WSL2 (1280)..."
-sudo ip link set eth0 mtu 1280
-log "MTU → $(cat /sys/class/net/eth0/mtu)"
+sudo ip link set eth0 mtu 1280 2>/dev/null || warn "Interface eth0 non trouvée, MTU ignoré"
+log "MTU → $(cat /sys/class/net/eth0/mtu 2>/dev/null || echo 'n/a')"
 
 # -----------------------------------------------------------------------------
-# 2. Installer dnsmasq si absent
+# 2. Désactiver le DNS override Tailscale
+#    (la connectivité réseau Tailscale reste intacte)
+# -----------------------------------------------------------------------------
+if command -v tailscale &>/dev/null; then
+    log "Désactivation du DNS override Tailscale..."
+    tailscale set --accept-dns=false
+    log "Tailscale accept-dns=false ✓ (accès distant SSH/RDP inchangé)"
+else
+    warn "tailscale non trouvé dans le PATH — étape ignorée"
+fi
+
+# -----------------------------------------------------------------------------
+# 3. Installer dnsmasq si absent
 # -----------------------------------------------------------------------------
 if ! command -v dnsmasq &>/dev/null; then
     log "Installation de dnsmasq..."
@@ -56,7 +71,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 3. Désactiver systemd-resolved (libère le port 53)
+# 4. Désactiver systemd-resolved (libère le port 53)
 # -----------------------------------------------------------------------------
 if systemctl is-active --quiet systemd-resolved; then
     log "Désactivation de systemd-resolved..."
@@ -67,7 +82,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 4. Créer la config dnsmasq OKD
+# 5. Créer la config dnsmasq OKD
 # -----------------------------------------------------------------------------
 log "Création de /etc/dnsmasq.d/okd-sno.conf..."
 sudo tee /etc/dnsmasq.d/okd-sno.conf > /dev/null << EOF
@@ -90,14 +105,14 @@ server=8.8.8.8
 EOF
 
 # -----------------------------------------------------------------------------
-# 5. Démarrer dnsmasq
+# 6. Démarrer dnsmasq
 # -----------------------------------------------------------------------------
 log "Démarrage de dnsmasq..."
 sudo systemctl enable dnsmasq 2>/dev/null
 sudo systemctl restart dnsmasq
 
 # -----------------------------------------------------------------------------
-# 6. Configurer resolv.conf
+# 7. Configurer resolv.conf
 # -----------------------------------------------------------------------------
 log "Configuration de /etc/wsl.conf..."
 sudo tee /etc/wsl.conf > /dev/null << EOF
@@ -106,9 +121,12 @@ generateResolvConf = false
 EOF
 
 log "Configuration de /etc/resolv.conf..."
+# Déverrouiller au cas où il serait déjà chattr +i d'une précédente exécution
+sudo chattr -i /etc/resolv.conf 2>/dev/null || true
 sudo rm -f /etc/resolv.conf
 sudo tee /etc/resolv.conf > /dev/null << EOF
 # OKD SNO Lab — DNS local
+# Géré par setup-dns-okd.sh — NE PAS MODIFIER MANUELLEMENT
 # Pour revenir au défaut : restore-dns-default.sh
 # Tailscale DNS géré via upstream dnsmasq (server=100.100.100.100)
 nameserver 127.0.0.1
@@ -117,7 +135,14 @@ nameserver 8.8.8.8
 EOF
 
 # -----------------------------------------------------------------------------
-# 7. Validation
+# 8. Verrouiller resolv.conf contre toute réécriture (Tailscale, WSL2...)
+# -----------------------------------------------------------------------------
+log "Verrouillage de /etc/resolv.conf (chattr +i)..."
+sudo chattr +i /etc/resolv.conf
+log "resolv.conf verrouillé ✓"
+
+# -----------------------------------------------------------------------------
+# 9. Validation
 # -----------------------------------------------------------------------------
 echo ""
 log "Validation DNS..."
@@ -128,9 +153,9 @@ APPS=$(dig console-openshift-console.apps.sno.okd.lab @127.0.0.1 +short 2>/dev/n
 INET=$(dig github.com @127.0.0.1 +short 2>/dev/null | head -1)
 
 if [ "$API" = "$SNO_IP" ]; then
-    log "api.sno.okd.lab → ${API} ✅"
+    log "api.sno.okd.lab        → ${API} ✅"
 else
-    err "api.sno.okd.lab → ECHEC (obtenu: ${API})"
+    err "api.sno.okd.lab → ECHEC (obtenu: '${API}') — vérifier dnsmasq"
 fi
 
 if [ "$APPS" = "$SNO_IP" ]; then
@@ -140,7 +165,7 @@ else
 fi
 
 if [ -n "$INET" ]; then
-    log "github.com → ${INET} ✅ (Internet OK)"
+    log "github.com             → ${INET} ✅ (Internet OK)"
 else
     warn "github.com non résolu — vérifier la connectivité Internet"
 fi
@@ -148,6 +173,8 @@ fi
 echo ""
 echo "============================================="
 echo "  DNS OKD configuré avec succès !"
+echo "  resolv.conf verrouillé (chattr +i)"
+echo "  Tailscale accès distant : non affecté"
 echo "  Pour revenir au défaut : ./restore-dns-default.sh"
 echo "============================================="
 echo ""
