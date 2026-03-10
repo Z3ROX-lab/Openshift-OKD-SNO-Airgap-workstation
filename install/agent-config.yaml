@@ -2,12 +2,10 @@ apiVersion: v1alpha1
 kind: AgentConfig
 metadata:
   name: sno
-rendezvousIP: 192.168.241.10             # IP statique du nœud SNO sur VMnet8
+rendezvousIP: 192.168.241.10
 hosts:
   - hostname: sno-master
     role: master
     interfaces:
-      - name: ens33
-        macAddress: "00:50:56:27:C8:0B"  # VM okd-sno-master
-                                          # VMware Workstation → VM Settings
-                                          # → Network Adapter → Advanced → MAC Address
+      - name: ens160
+        macAddress: "00:50:56:27:c8:0b"
