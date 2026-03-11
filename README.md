@@ -2,7 +2,7 @@
 
 > **Portfolio project** — Demonstrates end-to-end OpenShift/OKD expertise for on-premise, airgap, and IaC-driven enterprise deployments.
 
-[![OKD](https://img.shields.io/badge/OKD-4.17.0--okd--scos.0-red?logo=redhat)](https://www.okd.io/)
+[![OKD](https://img.shields.io/badge/OKD-4.15%20FCOS-red?logo=redhat)](https://www.okd.io/)
 [![ArgoCD](https://img.shields.io/badge/GitOps-ArgoCD-orange?logo=argo)](https://argoproj.github.io/cd/)
 [![Vault](https://img.shields.io/badge/Secrets-HashiCorp%20Vault-black?logo=vault)](https://www.vaultproject.io/)
 [![Harbor](https://img.shields.io/badge/Registry-Harbor-blue?logo=harbor)](https://goharbor.io/)
@@ -19,7 +19,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 
 | Domain | Tools |
 |--------|-------|
-| Cluster provisioning | OKD 4.17, Agent-based Installer, SCOS |
+| Cluster provisioning | OKD 4.15, Agent-based Installer, FCOS |
 | Load Balancing | HAProxy (API + Ingress) |
 | Airgap | `oc-mirror`, mirror-registry, Harbor, ImageContentSourcePolicy |
 | Operator lifecycle | OperatorHub (airgap mode), CatalogSource, OLM |
@@ -56,7 +56,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 │                      │ VMnet8 NAT (192.168.241.0/24)       │
 │  ┌───────────────────▼────────────────────────────────┐   │
 │  │           OKD SNO VM — 192.168.241.10              │   │
-│  │         SCOS │ vCPU: 8 │ RAM: 24G │ Disk: 120G    │   │
+│  │         FCOS │ vCPU: 8 │ RAM: 24G │ Disk: 120G    │   │
 │  │                                                    │   │
 │  │   ┌──────────────────────────────────────────┐    │   │
 │  │   │       OpenShift Ingress Controller        │    │   │
@@ -104,7 +104,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 - VMware Workstation Pro 17+
 - RAM : 32 Go minimum (24 Go alloués à la VM SNO)
 - Disk : 120 Go disponibles sur D:\
-- `openshift-install` binary (OKD 4.17.0-okd-scos.0)
+- `openshift-install` binary (OKD 4.15.0-0.okd-2024-03-10-010116)
 - `oc` CLI + `oc-mirror` plugin
 - HAProxy (load balancer — API + Ingress)
 
@@ -144,6 +144,9 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 - [x] Fix PostgreSQL container (assisted-service-db — socket `/var/run/postgresql`)
 - [x] Boot ISO + bootstrap cluster
 - [x] Validation cluster (`oc get nodes`, console web)
+
+![Install Complete](docs/screenshots/phase1-install-complete.png)
+*`INFO Install complete!` — Cluster OKD SNO 4.15 FCOS opérationnel sur `192.168.241.10` ✅*
 
 → [Guide d'installation complet](docs/phase1-bootstrap.md)
 
@@ -228,13 +231,13 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 │   ├── install-config.yaml             # Config cluster (originaux — conserver)
 │   └── agent-config.yaml               # Interface ens160, MAC statique
 ├── scripts/
-│   └── fix-assisted-db.sh              # Fix bug PostgreSQL socket OKD 4.17
+│   └── fix-assisted-db.sh              # Fix bug PostgreSQL socket OKD 4.15
 ├── haproxy/
 │   ├── haproxy.cfg
 │   └── haproxy-setup.md
 ├── airgap/
 │   ├── imagesets/
-│   │   └── okd-4.17-imageset.yaml      # oc-mirror : OKD + Harbor + operators
+│   │   └── okd-4.15-imageset.yaml      # oc-mirror : OKD + Harbor + operators
 │   └── mirror-registry/                # mirror-registry WSL2 (bootstrap)
 ├── harbor/
 │   ├── harborcluster-cr.yaml           # CR HarborCluster
@@ -257,6 +260,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
     ├── phase4-security.md
     ├── phase5-demo.md
     └── screenshots/
+        └── phase1-install-complete.png  # ✅ Bootstrap OKD SNO terminé
 ```
 
 ---
@@ -268,15 +272,16 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 | `AttributeError: 'NoneType' ...SettingBond` | nmstatectl absent dans WSL2 | Supprimer `networkConfig` de agent-config.yaml |
 | Interface `ens33` introuvable | vmxnet3 génère `ens160` pas `ens33` | Utiliser `ens160` |
 | IP VM aléatoire | Pas de réservation DHCP VMware | Ajouter entrée dans `vmnetdhcp.conf` |
-| `assisted-service-db` crash | Bug socket `/var/run/postgresql` OKD 4.17 | `--tmpfs /var/run/postgresql:rw,mode=0777` |
+| `assisted-service-db` crash | Bug socket `/var/run/postgresql` | `--tmpfs /var/run/postgresql:rw,mode=0777` |
 | dnsmasq conflits Tailscale | Port 53 partagé | `/etc/hosts` |
+| OKD 4.17 SCOS bloqué sur VMware | `release-image-pivot` ne peut pas remount `/sysroot` | **Utiliser OKD 4.15 FCOS** |
 
 ---
 
 ## 🎓 Skills Demonstrated
 
 - ✅ OpenShift UPI deployment (`platform: none`, Agent-based Installer)
-- ✅ SCOS (CentOS Stream CoreOS) bare-metal provisioning via Ignition
+- ✅ FCOS (Fedora CoreOS) bare-metal provisioning via Ignition
 - ✅ Airgap cluster operations (`oc-mirror`, disconnected OperatorHub, ICSP)
 - ✅ Harbor : registry OCI + Helm OCI + Trivy CVE scan + Cosign signing
 - ✅ Supply chain security (Cosign + Kyverno enforce)
