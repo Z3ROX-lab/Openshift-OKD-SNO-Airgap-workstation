@@ -1,7 +1,7 @@
 # Phase 1 — Guide Complet : Bootstrap OKD SNO sur VMware Workstation
 
 > Document pédagogique — Comprendre chaque étape avant de l'exécuter
-> Version 2.0 — Corrections issues de l'installation réelle
+> Version 2.1 — Corrections issues de l'installation réelle (OKD 4.15 FCOS)
 
 ---
 
@@ -43,47 +43,64 @@ worker-1
 worker-2
 ```
 
-### L'OS du nœud : SCOS
+### L'OS du nœud : FCOS (OKD 4.15)
 
-Depuis OKD 4.17, l'OS des nœuds est **SCOS** (CentOS Stream CoreOS). C'est un OS :
+OKD 4.15 utilise **FCOS** (Fedora CoreOS) comme OS des nœuds. C'est un OS :
 
 - **Immuable** : le filesystem système est en lecture seule. On ne peut pas installer de paquets manuellement
 - **Géré par Ignition** : toute la configuration initiale (users, fichiers, services) est injectée au premier boot via un fichier JSON appelé *ignition config*
 - **Auto-mis à jour** : le MCO (Machine Config Operator) gère les mises à jour OS via GitOps
 
-C'est exactement l'OS utilisé en production chez les grands comptes — Nokia, Orange, Telefónica utilisent tous des nœuds CoreOS/SCOS sur leurs clusters OpenShift.
+> ℹ️ **Pourquoi FCOS et non SCOS ?** OKD 4.17 utilise SCOS (CentOS Stream CoreOS), mais cette version a un problème bloquant sur VMware : `release-image-pivot` ne peut pas remonter `/sysroot` en écriture sur une VM VMware (contrainte du loop device squashfs). OKD 4.15 FCOS n'a pas cette limitation. Voir tableau des problèmes connus.
 
 ### Le flux complet de l'installation
 
 ```
-WSL2 Ubuntu
-    │
-    ├── 1. install-config.yaml     ← configuration du cluster
-    ├── 2. agent-config.yaml       ← configuration du nœud (hostname, MAC, role)
-    │
-    ▼
-openshift-install agent create image
-    │
-    ▼
-agent.x86_64.iso                  ← ISO bootable (~1 Go)
-    │
-    ▼
-VMware Workstation                ← on monte l'ISO dans la VM
-    │
-    ▼
-VM boot → Assisted Installer      ← agent embarqué dans l'ISO
-    │    détecte le hardware
-    │    configure le réseau
-    │    applique les ignition configs
-    │
-    ▼
-OKD SNO opérationnel              ← ~60-90 minutes
-    │
-    ▼
-openshift-install agent wait-for install-complete
-    │
-    ▼
-Console : https://console-openshift-console.apps.sno.okd.lab
+  WSL2 Ubuntu
+  ┌─────────────────────────────────────────────┐
+  │  install-config.yaml + agent-config.yaml    │
+  │              │                              │
+  │              ▼                              │
+  │  openshift-install-4.15 agent create image  │
+  │              │                              │
+  │              ▼                              │
+  │     agent-4.15.x86_64.iso (~1 Go)           │
+  └──────────────┬──────────────────────────────┘
+                 │  copie vers D:\okd-lab\install\
+                 ▼
+  VMware Workstation (UEFI, 8vCPU, 24Go, 120Go NVMe)
+  ┌─────────────────────────────────────────────┐
+  │  Boot ISO → Fedora CoreOS 39.20231101.3.0   │
+  │  "This host is the rendezvous host"         │
+  │              │                              │
+  │              ▼                              │
+  │  assisted-service + fix PostgreSQL tmpfs    │
+  │              │                              │
+  │              ▼                              │
+  │  Validations host (CPU/RAM/DNS/NTP/disk) ✅  │
+  │              │                              │
+  │              ▼                              │
+  │  coreos-installer → nvme0n1 [0%──100%]      │
+  │              │                              │
+  │  ⚠️  Déconnecter CD dans VMware !           │
+  │              │                              │
+  │              ▼                              │
+  │  Reboot → UEFI → NVMe (nvme0n1p3 /boot)    │
+  │              │                              │
+  │              ▼                              │
+  │  release-image-pivot → oc + kubelet         │
+  │              │                              │
+  │              ▼                              │
+  │  bootkube → etcd + kube-apiserver           │
+  └──────────────┬──────────────────────────────┘
+                 │
+                 ▼
+  openshift-install-4.15 agent wait-for install-complete
+                 │
+                 ▼
+         🎉 INFO Install complete!
+  kubeconfig : ~/work/okd-sno-install/auth/kubeconfig
+  Console    : https://console-openshift-console.apps.sno.okd.lab
 ```
 
 ---
@@ -97,7 +114,7 @@ C'est le **cerveau de l'installation**. Il fait deux choses :
 **Avant l'installation :**
 - Lit `install-config.yaml` et `agent-config.yaml`
 - Génère les *manifests* Kubernetes (objets YAML de configuration du cluster)
-- Génère les *ignition configs* (fichiers JSON qui configurent l'OS SCOS au boot)
+- Génère les *ignition configs* (fichiers JSON qui configurent l'OS FCOS au boot)
 - Assemble tout dans une **ISO bootable** (~1 Go) contenant l'agent d'installation
 
 **Pendant l'installation :**
@@ -118,14 +135,14 @@ oc get co                           # Cluster Operators
 oc adm top nodes
 ```
 
-### Pourquoi OKD 4.17.0-okd-scos.0 spécifiquement ?
+### Pourquoi OKD 4.15 spécifiquement ?
 
-C'est la **première release stable SCOS** d'OKD 4.17. Les versions `4.17.0-0.okd-scos-YYYY-MM-DD` sont des builds nightlies — fonctionnels mais sans garantie de stabilité.
+OKD 4.15 est la dernière version **FCOS stable** avant la migration vers SCOS (4.16+). Sur VMware Workstation, SCOS a un blocage de production : `release-image-pivot` ne peut pas remonter `/sysroot` en écriture car le rootfs est un squashfs monté via loop device (read-only par nature). OKD 4.15 FCOS n'a pas cette contrainte.
 
 ```
-4.17.0-okd-scos.0   ← version stable (notre choix ✅)
-4.17.0-okd-scos.1   ← patch stable
-4.17.0-0.okd-scos-2025-02-23-210454  ← nightly (instable ❌)
+OKD 4.15 (FCOS)   ← notre choix ✅ — fonctionne sur VMware
+OKD 4.16 (SCOS)   ← migration SCOS
+OKD 4.17 (SCOS)   ← release-image-pivot bloqué sur VMware ❌
 ```
 
 ---
@@ -158,14 +175,14 @@ PowerShell télécharge directement via le stack réseau Windows, sans passer pa
 
 ## 4. Pourquoi une clé SSH ?
 
-### SCOS est immuable, pas de mot de passe
+### FCOS est immuable, pas de mot de passe
 
-Sur SCOS :
+Sur FCOS :
 - Pas de root password configuré
 - Pas d'accès console avec mot de passe
 - Filesystem système en lecture seule
 
-La **seule façon d'accéder** au nœud SCOS est SSH avec une clé publique.
+La **seule façon d'accéder** au nœud FCOS est SSH avec une clé publique.
 
 ### Comment la clé est injectée
 
@@ -177,7 +194,7 @@ install-config.yaml
 openshift-install génère master.ign   ← fichier Ignition JSON
           │
           ▼
-SCOS boot → Ignition configure ~/.ssh/authorized_keys pour user "core"
+FCOS boot → Ignition configure ~/.ssh/authorized_keys pour user "core"
           │
           ▼
 ssh -i ~/.ssh/okd-sno core@192.168.241.10  ✅
@@ -248,7 +265,7 @@ pullSecret: '{"auths":{"fake":{"auth":"aGVsbG86d29ybGQ="}}}'
 
 sshKey: |
   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMfYWQYhU/AfkK5U+URfW5Huvg4BeZUKlnKZSlYW7VqW okd-sno-lab
-# Clé publique injectée dans SCOS via Ignition
+# Clé publique injectée dans FCOS via Ignition
 ```
 
 ---
@@ -346,21 +363,6 @@ host okd-sno-master {
 }
 ```
 
-Résultat final :
-
-```
-host VMnet8 {
-    hardware ethernet 00:50:56:C0:00:08;
-    fixed-address 192.168.241.1;
-    ...
-}
-host okd-sno-master {
-    hardware ethernet 00:50:56:27:c8:0b;
-    fixed-address 192.168.241.10;
-}
-# End
-```
-
 Redémarrer le service DHCP VMware :
 
 ```powershell
@@ -441,7 +443,7 @@ sudo sed -i '/okd\.lab/d' /etc/hosts
 ### Qu'est-ce que l'Agent-based Installer ?
 
 L'ISO contient tout le nécessaire pour bootstrapper le cluster sans infrastructure externe :
-- Kernel Linux minimal (SCOS)
+- Kernel Linux minimal (FCOS)
 - Agent d'installation (Assisted Installer en mode local)
 - Tes configurations compilées en ignition configs
 
@@ -463,7 +465,7 @@ mkdir -p ~/work/okd-sno-install
 cp ~/work/Openshift-OKD-SNO-Airgap-workstation/install/install-config.yaml ~/work/okd-sno-install/
 cp ~/work/Openshift-OKD-SNO-Airgap-workstation/install/agent-config.yaml ~/work/okd-sno-install/
 
-openshift-install agent create image \
+/mnt/d/okd-lab/install/openshift-install-4.15 agent create image \
   --dir ~/work/okd-sno-install/ --log-level=info
 ```
 
@@ -478,20 +480,19 @@ INFO Generated ISO at ~/work/okd-sno-install/agent.x86_64.iso
 ```
 
 ![ISO Generated](screenshots/iso-generated.png)
+*Génération ISO réussie — rendezvous host IP 192.168.241.10 confirmé*
 
 ### Copier vers Windows et monter dans VMware
 
 ```bash
-cp ~/work/okd-sno-install/agent.x86_64.iso /mnt/d/okd-lab/install/
+cp ~/work/okd-sno-install/agent.x86_64.iso /mnt/d/okd-lab/install/agent-4.15.x86_64.iso
 ```
 
 ```
 VM Settings → CD/DVD (IDE)
-→ Use ISO image file : D:\okd-lab\install\agent.x86_64.iso
+→ Use ISO image file : D:\okd-lab\install\agent-4.15.x86_64.iso
 → Connect at power on : ✅
 ```
-
-![CD/DVD Settings](screenshots/vm-cdrom-iso.png)
 
 ---
 
@@ -501,26 +502,48 @@ VM Settings → CD/DVD (IDE)
 
 | Paramètre | Valeur | Raison |
 |-----------|--------|--------|
-| OS Guest | CentOS 8 64-bit | SCOS basé sur CentOS Stream — le plus proche disponible |
+| OS Guest | Other Linux 6.x kernel 64-bit | FCOS = Fedora CoreOS |
 | vCPU | 8 | Minimum OKD SNO |
 | RAM | 24 576 MB | Confort + etcd |
 | Disk | 120 Go thin | `/var` OpenShift peut grossir significativement |
 | Réseau | VMnet8 NAT | Même subnet que WSL2 |
-| Adaptateur réseau | vmxnet3 | Génère l'interface `ens160` dans SCOS |
-| Firmware | UEFI | SCOS ne supporte pas BIOS legacy |
+| Adaptateur réseau | vmxnet3 | Génère l'interface `ens160` dans FCOS |
+| Firmware | **UEFI** ← **dès la création** | FCOS utilise GPT + partition EFI |
 | Secure Boot | ❌ Désactivé | Kernel OKD non signé |
 
 ### ⚠️ Paramètres critiques
 
-**1. UEFI + Secure Boot OFF**
+**1. UEFI + Secure Boot OFF — dès la création de la VM**
+
+> ⛔ **Ne JAMAIS passer de BIOS → UEFI après création**. Changer le firmware sur une VM existante efface la table de partitions GPT. FCOS écrit une partition EFI (`nvme0n1p1`) lors de l'installation — si la VM est en BIOS legacy, cette partition ne peut pas être lue au reboot → échec silencieux du boot.
 
 ```
-VM Settings → Options → Advanced
+Assistant création VM → Options → Advanced
 → Firmware type : UEFI ✅
 → Enable secure boot : décoché ✅
 ```
 
-**2. Boot order — forcer le CD en premier**
+![VM Settings UEFI](screenshots/vm-settings-uefi.png)
+*VM Settings → Options → Advanced : UEFI sélectionné, Secure Boot décoché ✅*
+
+> ❌ **Exemple de la mauvaise configuration (BIOS) :**
+>
+> ![VM Settings BIOS wrong](screenshots/vm-settings-bios-wrong.png)
+> *BIOS sélectionné → FCOS ne peut pas lire la partition EFI après installation → VM ne boot pas depuis NVMe*
+
+**2. Pourquoi UEFI est obligatoire**
+
+```
+coreos-installer écrit sur nvme0n1 :
+  nvme0n1p1  EFI System Partition (ESP)   ← boot UEFI ici
+  nvme0n1p2  /boot/efi
+  nvme0n1p3  /boot
+  nvme0n1p4  /var (données OpenShift)
+
+Sans UEFI → la VM ne voit pas la partition EFI → ne boot pas depuis NVMe
+```
+
+**3. Boot order — forcer le CD en premier**
 
 VMware UEFI n'a pas d'interface graphique de boot order. Éditer le VMX :
 
@@ -540,7 +563,7 @@ Supprimer le fichier nvram pour reset UEFI (obligatoire si la VM a déjà booté
 Remove-Item "D:\okd-lab\vm\okd-sno-master.nvram" -ErrorAction SilentlyContinue
 ```
 
-**3. Récupérer la MAC address**
+**4. Récupérer la MAC address**
 
 ```
 VM Settings → Network Adapter → Advanced → MAC Address
@@ -548,7 +571,8 @@ VM Settings → Network Adapter → Advanced → MAC Address
 → Mettre à jour agent-config.yaml (en minuscules)
 ```
 
-![VM Settings Hardware](screenshots/vm-10-settings-hardware.png)
+![VM Settings Hardware](screenshots/vm-settings-hardware-cdrom.png)
+*VM Settings Hardware — 8 vCPU, 24 Go RAM, 120 Go NVMe, CD/DVD agent-4.15.x86_64.iso*
 
 ---
 
@@ -559,27 +583,38 @@ VM Settings → Network Adapter → Advanced → MAC Address
 Power On. Sur la console VMware, attendre :
 
 ```
+Fedora CoreOS 39.20231101.3.0
 This host (192.168.241.10) is the rendezvous host.
 ```
 
-![Boot Rendezvous Host](screenshots/boot-rendezvous-host.png)
+![Boot FCOS Rendezvous](screenshots/boot-fcos-rendezvous-4.15.png)
+*Fedora CoreOS 39.x — IP 192.168.241.10 confirmée, rendezvous host ✅*
 
 > Si la console affiche **"This host is not the rendezvous host"** avec une IP différente → réservation DHCP VMware non appliquée. Vérifier `vmnetdhcp.conf` et relancer `Restart-Service VMnetDHCP`.
+>
+> ![Boot not rendezvous](screenshots/boot-fcos-not-rendezvous.png)
+> *IP .134 au lieu de .10 → réservation DHCP manquante*
 
 ### Nettoyer known_hosts (si reboot VM)
 
-À chaque boot ISO, SCOS génère de nouvelles clés SSH → SSH refuse la connexion avec "host key changed" :
+À chaque boot ISO, FCOS génère de nouvelles clés SSH → SSH refuse la connexion avec "host key changed" :
 
 ```bash
-ssh-keygen -f '/home/zerotrust/.ssh/known_hosts' -R '192.168.241.10'
+ssh-keygen -f "${HOME}/.ssh/known_hosts" -R '192.168.241.10'
 ```
 
 ### Lancer le wait-for
 
 ```bash
-openshift-install agent wait-for install-complete \
+/mnt/d/okd-lab/install/openshift-install-4.15 agent wait-for install-complete \
   --dir ~/work/okd-sno-install/ --log-level=info
 ```
+
+![Wait-for Bootstrap](screenshots/wait-for-bootstrap.png)
+*NTP synced → Host ready → preparing-for-installation → Installing: bootstrap*
+
+![Wait-for Bootkube](screenshots/wait-for-bootkube.png)
+*Installing: bootstrap → Waiting for bootkube*
 
 ### Timeline des messages
 
@@ -590,12 +625,44 @@ openshift-install agent wait-for install-complete \
 | `Host is ready to be installed` | Host validé |
 | `Cluster is ready for install` | Prêt à installer |
 | `preparing-for-installation` | Pull images |
-| `Installing: bootstrap` | Bootstrap Kubernetes |
+| `Installing: write image to disk` | coreos-installer en cours |
+| **⚠️ Reboot iminent** | **Déconnecter le CD maintenant !** |
 | `Waiting for bootkube` | Démarrage etcd + API server |
 | `Bootstrap is complete` | Control plane opérationnel |
 | `Install complete!` | ✅ Cluster prêt |
 
-![Wait-for Bootkube](screenshots/wait-for-bootkube.png)
+### ⚠️ Déconnecter le CD avant le reboot NVMe
+
+C'est l'étape la plus critique et la moins documentée officiellement.
+
+Quand `coreos-installer` a terminé d'écrire FCOS sur `nvme0n1`, la VM redémarre automatiquement. Si le CD est encore connecté dans VMware, la VM reboote sur l'ISO au lieu du NVMe et recommence l'installation depuis zéro.
+
+**Dès que `write image to disk` est terminé dans les logs :**
+
+```
+VMware → VM Settings → CD/DVD (IDE) → décocher "Connected" → OK
+```
+
+![CD Déconnecté](screenshots/vm-settings-cdrom-4.15.png)
+*"Connected" décoché — la VM reboote depuis le NVMe*
+
+Vérifier après reboot que le boot s'est fait depuis le NVMe :
+
+```bash
+ssh -i ~/.ssh/okd-sno core@192.168.241.10 "lsblk | grep -E 'nvme|loop'"
+# nvme0n1p3 /boot  ← ✅ boot depuis NVMe
+# (si loop1 /sysroot → VM a booté depuis l'ISO → déconnecter CD et reboot)
+```
+
+> ❌ **loop1 /sysroot = VM encore sur ISO :**
+>
+> ![lsblk sur ISO](screenshots/lsblk-on-iso.png)
+> *loop1 monté sur /sysroot — déconnecter CD et `sudo reboot`*
+
+> ✅ **nvme0n1p3 /boot = boot NVMe correct + bootkube activating :**
+>
+> ![lsblk NVMe boot](screenshots/lsblk-nvme-boot-bootkube.png)
+> *nvme0n1p3 /boot, nvme0n1p4 /var — kubelet inactive, bootkube activating ✅*
 
 ### ⚠️ Validation NTP
 
@@ -609,7 +676,7 @@ ssh -i ~/.ssh/okd-sno core@192.168.241.10 "sudo chronyc makestep"
 
 ## 12. Fix PostgreSQL — Assisted Service DB
 
-> ⚠️ **Bug connu OKD 4.17 SNO sur VMware** — non documenté dans les guides officiels.
+> ⚠️ **Bug connu OKD SNO sur VMware** — non documenté dans les guides officiels.
 
 ### Symptôme
 
@@ -627,8 +694,6 @@ FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.5432.lock": No s
 ### Cause
 
 Le container PostgreSQL (`assisted-service-db`) démarre avec `--user=postgres` mais le répertoire `/var/run/postgresql/` n'existe pas dans le container. `pg_ctl` ne peut pas créer le socket de verrouillage.
-
-C'est un bug du container OKD 4.17 — l'entrypoint `start_db.sh` ne crée pas ce répertoire avant de lancer PostgreSQL.
 
 ### Fix — Script wrapper Podman
 
@@ -663,7 +728,7 @@ ENDSSH
 
 ### Pourquoi `--tmpfs /var/run/postgresql` ?
 
-`--tmpfs` monte un filesystem temporaire en mémoire sur le chemin spécifié, **à l'intérieur du container**. Ce répertoire :
+`--tmpfs` monte un filesystem temporaire en mémoire à l'intérieur du container. Ce répertoire :
 - Est créé automatiquement au démarrage du container
 - Appartient à l'UID/GID correct (`mode=0777` pour postgres)
 - Disparaît à l'arrêt du container (pas de persistance nécessaire — c'est un socket)
@@ -671,11 +736,15 @@ ENDSSH
 ### Re-enregistrement après fix
 
 ```bash
-ssh -i ~/.ssh/okd-sno core@192.168.241.10 \
-  "sudo systemctl restart assisted-service && sleep 5 && \
-   sudo systemctl start agent-register-cluster && sleep 10 && \
-   sudo systemctl start agent-register-infraenv && sleep 5 && \
-   sudo systemctl restart agent"
+ssh -i ~/.ssh/okd-sno core@192.168.241.10 << 'EOF'
+sudo systemctl restart assisted-service
+sleep 5
+sudo systemctl start agent-register-cluster
+sleep 15
+sudo systemctl start agent-register-infraenv
+sleep 5
+sudo systemctl restart agent
+EOF
 ```
 
 ---
@@ -702,7 +771,7 @@ export KUBECONFIG=~/work/okd-sno-install/auth/kubeconfig
 # État du nœud
 oc get nodes
 # NAME         STATUS   ROLES                         AGE   VERSION
-# sno-master   Ready    control-plane,master,worker   1h    v1.30.x
+# sno-master   Ready    control-plane,master,worker   1h    v1.28.x
 # ROLES = control-plane,master,worker → confirmation SNO ✅
 
 # Version du cluster
@@ -739,13 +808,14 @@ Repo Git :  ~/work/Openshift-OKD-SNO-Airgap-workstation/
 │   ├── install-config.yaml    ← originaux (ne jamais supprimer)
 │   └── agent-config.yaml      ← interface ens160, MAC 00:50:56:27:c8:0b
 ├── scripts/
-│   └── fix-assisted-db.sh     ← fix bug PostgreSQL socket OKD 4.17
+│   └── fix-assisted-db.sh     ← fix bug PostgreSQL socket
 
 VMware :  D:\okd-lab\
 ├── install\
-│   └── agent.x86_64.iso       ← ISO générée, à monter dans VMware
+│   ├── openshift-install-4.15         ← binaire OKD 4.15 FCOS
+│   └── agent-4.15.x86_64.iso          ← ISO à monter dans VMware
 └── vm\okd-sno-master\
-    └── okd-sno-master.vmx     ← bios.bootOrder = "cdrom,hdd" ajouté
+    └── okd-sno-master.vmx             ← bios.bootOrder = "cdrom,hdd"
 
 WSL2 :  ~/work/okd-sno-install/
 └── auth/
@@ -753,7 +823,7 @@ WSL2 :  ~/work/okd-sno-install/
     └── kubeadmin-password     ← mot de passe console
 
 SSH :  ~/.ssh/
-├── okd-sno                    ← clé privée (accès nœud SCOS)
+├── okd-sno                    ← clé privée (accès nœud FCOS)
 └── okd-sno.pub                ← dans install-config.yaml
 
 Windows :  C:\ProgramData\VMware\vmnetdhcp.conf
@@ -766,15 +836,18 @@ Windows :  C:\ProgramData\VMware\vmnetdhcp.conf
 
 | Symptôme | Cause | Solution |
 |----------|-------|----------|
+| `release-image-pivot` bloqué — Permission denied remounting /sysroot | OKD 4.17 SCOS interdit le remount sur VMware (squashfs loop device) | **Utiliser OKD 4.15 FCOS** |
+| `EFI variables are not supported` au boot NVMe | VM créée en BIOS legacy | Recréer la VM avec firmware **UEFI dès la création** |
+| VM reboote sur ISO après écriture disque | CD encore connecté dans VMware | Déconnecter CD avant le reboot (VM Settings → CD/DVD) |
 | `AttributeError: 'NoneType' object has no attribute 'SettingBond'` | nmstatectl cassé dans WSL2 | Supprimer `networkConfig` de agent-config.yaml |
 | IP VM = `.134` au lieu de `.10` | Pas de réservation DHCP | Ajouter entrée dans `vmnetdhcp.conf` |
 | "This host is not the rendezvous host" | IP DHCP ≠ rendezvousIP | Réservation DHCP + `Restart-Service VMnetDHCP` |
 | `assisted-service-db` crash en boucle | Bug socket `/var/run/postgresql` | Section 12 — wrapper `--tmpfs` |
 | `nslookup api.sno.okd.lab` → NXDOMAIN | nslookup bypasse /etc/hosts | Normal — utiliser `ping` |
-| SSH "host key changed" après reboot | SCOS regénère les clés à chaque boot ISO | `ssh-keygen -R 192.168.241.10` |
+| SSH "host key changed" après reboot | FCOS regénère les clés à chaque boot ISO | `ssh-keygen -R 192.168.241.10` |
 | NTP validation bloquée | Démarrage lent chrony | `chronyc makestep` sur la VM |
 
 ---
 
 *Document généré dans le cadre du projet `Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation`*
-*Phase 1 — Bootstrap OKD SNO sur VMware Workstation — Version 2.0 — Mars 2026*
+*Phase 1 — Bootstrap OKD SNO sur VMware Workstation — Version 2.1 — Mars 2026*
