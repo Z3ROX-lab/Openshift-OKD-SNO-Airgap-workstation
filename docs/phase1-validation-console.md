@@ -127,6 +127,72 @@ Les Services réseau clés sont opérationnels :
 
 ---
 
+## 8. CLI — oc get nodes / clusterversion / co
+
+![oc get nodes co](screenshots/phase1-oc-get-nodes-co.png)
+
+### Nœud
+
+```
+NAME         STATUS   ROLES                         AGE   VERSION
+sno-master   Ready    control-plane,master,worker   92m   v1.28.7+6e2789b
+```
+
+✅ `Ready` — rôles SNO confirmés — Kubernetes `v1.28.7`
+
+### Cluster Version
+
+```
+NAME      VERSION                          AVAILABLE   PROGRESSING   SINCE   STATUS
+version   4.15.0-0.okd-2024-03-10-010116   True        False         22m     Cluster version is 4.15.0-...
+```
+
+✅ `AVAILABLE=True`, `PROGRESSING=False` — cluster stable
+
+### Cluster Operators — 30/30 ✅
+
+Tous les 30 Cluster Operators sont `AVAILABLE=True / PROGRESSING=False / DEGRADED=False` :
+
+| Operator | Available | Progressing | Degraded |
+|----------|-----------|-------------|----------|
+| authentication | ✅ True | False | False |
+| baremetal | ✅ True | False | False |
+| cloud-controller-manager | ✅ True | False | False |
+| cloud-credential | ✅ True | False | False |
+| cluster-autoscaler | ✅ True | False | False |
+| config-operator | ✅ True | False | False |
+| console | ✅ True | False | False |
+| control-plane-machine-set | ✅ True | False | False |
+| csi-snapshot-controller | ✅ True | False | False |
+| dns | ✅ True | False | False |
+| etcd | ✅ True | False | False |
+| image-registry | ✅ True | False | False |
+| ingress | ✅ True | False | False |
+| insights | ✅ True | False | False |
+| kube-apiserver | ✅ True | False | False |
+| kube-controller-manager | ✅ True | False | False |
+| kube-scheduler | ✅ True | False | False |
+| kube-storage-version-migrator | ✅ True | False | False |
+| machine-api | ✅ True | False | False |
+| machine-approver | ✅ True | False | False |
+| machine-config | ✅ True | False | False |
+| marketplace | ✅ True | False | False |
+| monitoring | ✅ True | False | False |
+| network | ✅ True | False | False |
+| node-tuning | ✅ True | False | False |
+| openshift-apiserver | ✅ True | False | False |
+| openshift-controller-manager | ✅ True | False | False |
+| openshift-samples | ✅ True | False | False |
+| operator-lifecycle-manager | ✅ True | False | False |
+| operator-lifecycle-manager-catalog | ✅ True | False | False |
+| operator-lifecycle-manager-packageserver | ✅ True | False | False |
+| service-ca | ✅ True | False | False |
+| storage | ✅ True | False | False |
+
+> **30/30 COs Available** = cluster entièrement opérationnel, prêt pour Phase 2.
+
+---
+
 ## Récapitulatif Phase 1 ✅
 
 | Critère | Statut | Preuve |
@@ -137,9 +203,11 @@ Les Services réseau clés sont opérationnels :
 | OperatorHub disponible | ✅ | 282 operators catalogue |
 | Tous pods Running/Completed | ✅ | Pods All Namespaces |
 | Tous deployments 1/1 | ✅ | Deployments All Namespaces |
-| Node Ready | ✅ | `sno-master` Ready |
+| Node Ready | ✅ | `sno-master` Ready — `v1.28.7+6e2789b` |
 | Rôles SNO corrects | ✅ | control-plane + master + worker |
 | Ressources cohérentes | ✅ | 23.43 GiB / 8 cores / 119.8 GiB |
+| ClusterVersion stable | ✅ | `AVAILABLE=True`, `PROGRESSING=False` |
+| **30/30 Cluster Operators** | ✅ | Tous `Available=True`, `Degraded=False` |
 
 ---
 
@@ -167,6 +235,7 @@ Les Services réseau clés sont opérationnels :
 | `phase1-console-deployments.png` | Workloads → Deployments (All Namespaces) |
 | `phase1-console-services.png` | Networking → Services (All Namespaces) |
 | `phase1-console-nodes.png` | Compute → Nodes — sno-master Ready |
+| `phase1-oc-get-nodes-co.png` | CLI — oc get nodes + clusterversion + **30/30 COs** ✅ |
 
 ---
 
