@@ -428,7 +428,13 @@ docker tag alpine:3.19 harbor.okd.lab/library/alpine:3.19
 docker push harbor.okd.lab/library/alpine:3.19
 ```
 
+![Library Alpine](screenshots/harbor-vm-library-alpine.png)
+
 ### Trivy — Scan CVE automatique
+
+![Trivy Not Scanned](screenshots/harbor-vm-trivy-not-scanned.png)
+
+Au push, l'image apparaît d'abord avec le statut **Not Scanned**. Cliquer sur **Scan Vulnerability** pour déclencher manuellement, ou attendre le scan automatique.
 
 ![Trivy Results](screenshots/harbor-vm-trivy-results.png)
 
