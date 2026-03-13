@@ -97,6 +97,100 @@ Vault Config Operator gère :         Vault Config Operator ne gère PAS :
 
 ---
 
+## Sources de vérité — GitHub, GitLab CI et Harbor
+
+Une question naturelle quand on a un GitLab Runner dans OKD et ArgoCD qui synchronise
+depuis GitHub : **a-t-on deux sources de vérité ?**
+
+Non — chaque composant a un rôle distinct et non overlapping.
+
+### Les trois sources de vérité distinctes
+
+| Composant | Type | Ce qu'il contient |
+|-----------|------|-------------------|
+| **GitHub** | Source de vérité infra | Manifests K8s, Helm values, ArgoCD Apps, policies |
+| **Harbor** | Source de vérité artefacts | Images OCI versionnées, Helm charts OCI |
+| **GitLab CI** | Pipeline de transformation | Pas une source de vérité — produit des artefacts |
+
+GitLab CI n'est **jamais** une source de vérité. C'est un pipeline de transformation :
+il prend du code source, produit une image, la pousse dans Harbor, puis met à jour
+un tag dans GitHub. Il ne parle jamais directement au cluster.
+
+### Flux complet GitOps — du commit au déploiement
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│           FLUX COMPLET : CODE → IMAGE → CLUSTER                     │
+│                                                                      │
+│  Développeur                                                         │
+│      │                                                               │
+│      │  1. git push (code applicatif)                               │
+│      ▼                                                               │
+│  GitLab (gitlab.com free tier)                                       │
+│      │                                                               │
+│      │  2. déclenche pipeline GitLab CI                             │
+│      ▼                                                               │
+│  GitLab Runner (pod dans OKD)                                        │
+│      │                                                               │
+│      ├── 3a. build image → Kaniko (sans Docker daemon)              │
+│      ├── 3b. scan CVE   → Trivy                                     │
+│      ├── 3c. sign image → Cosign                                    │
+│      │                                                               │
+│      │  4. push image + signature                                   │
+│      ▼                                                               │
+│  Harbor (harbor.okd.lab)  ◄──────────────────────────────────────┐  │
+│      │                                                            │  │
+│      │  scan Trivy automatique à chaque push                     │  │
+│      │  stockage OCI : harbor.okd.lab/apps/myapp:v1.2.3          │  │
+│      │                                                            │  │
+│      │  5. pipeline met à jour le manifest GitHub                 │  │
+│      ▼                                                            │  │
+│  GitHub (Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation)         │  │
+│      │                                                            │  │
+│      │  manifests/apps/myapp/deployment.yaml                     │  │
+│      │    image: harbor.okd.lab/apps/myapp:v1.2.3  ← commit auto │  │
+│      │                                                            │  │
+│      │  6. ArgoCD détecte le changement (polling ou webhook)     │  │
+│      ▼                                                            │  │
+│  ArgoCD (openshift-gitops)                                        │  │
+│      │                                                            │  │
+│      │  7. sync → applique le manifest mis à jour                │  │
+│      ▼                                                            │  │
+│  OKD — Kubernetes API                                             │  │
+│      │                                                            │  │
+│      │  8. Kyverno vérifie la signature Cosign de l'image        │  │
+│      │     avant autorisation du déploiement                     │  │
+│      │                                                            │  │
+│      │  9. pull image depuis Harbor ─────────────────────────────┘  │
+│      ▼                                                               │
+│  Pod applicatif ✅ — image signée, scannée, versionnée              │
+│                                                                      │
+│ ┌──────────────────────────────────────────────────────────────┐    │
+│ │  RÈGLE GITOPS STRICTE :                                       │    │
+│ │  Le cluster ne reçoit d'ordres QUE depuis GitHub via ArgoCD  │    │
+│ │  GitLab CI ne parle JAMAIS directement à l'API Kubernetes    │    │
+│ │  Tout changement d'état du cluster = commit dans GitHub      │    │
+│ └──────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Pourquoi ce pattern est important en enterprise
+
+En contexte grands comptes (défense, banque, télécom), ce pattern répond à trois exigences :
+
+**Auditabilité** — chaque déploiement est tracé dans Git avec un auteur, une date,
+et un diff lisible. L'audit trail est complet sans effort supplémentaire.
+
+**Séparation des accès** — les développeurs poussent du code sur GitLab, jamais
+de credentials Kubernetes. Seul ArgoCD a accès au cluster, via un ServiceAccount
+dédié avec des droits minimaux.
+
+**Reproductibilité** — l'état exact du cluster à n'importe quel instant est
+reconstituable depuis Git + Harbor. En cas de disaster recovery, on repointe
+ArgoCD sur le repo et le cluster se reconstruit seul.
+
+---
+
 ## Séparation des responsabilités — récapitulatif
 
 ```
