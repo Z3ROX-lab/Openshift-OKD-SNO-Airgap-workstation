@@ -190,15 +190,64 @@ Entrée dans `/etc/hosts` WSL2 et `C:\Windows\System32\drivers\etc\hosts` :
 
 ## Screenshots
 
-| Fichier | Contenu |
-|---------|---------|
-| `keycloak-operator-hub.png` | Sélection Keycloak Operator dans OperatorHub |
-| `keycloak-operator-install-config.png` | Configuration installation operator |
-| `keycloak-operator-installing.png` | Installation en cours |
-| `keycloak-operator-succeeded.png` | Operator Succeeded |
-| `keycloak-operator-installed.png` | Vue Installed Operators namespace keycloak |
-| `keycloak-login-page.png` | Page login Keycloak |
-| `keycloak-create-realm.png` | Création realm okd |
-| `keycloak-realm-okd-created.png` | Realm okd créé |
-| `keycloak-client-openshift.png` | Client openshift configuré |
-| `keycloak-client-credentials.png` | Client secret |
+### 1. Installation Operator
+
+![OperatorHub — sélection Keycloak](screenshots/keycloak-operator-hub.png)
+*Keycloak Operator v26.5.5 dans OperatorHub*
+
+![Configuration installation](screenshots/keycloak-operator-install-config.png)
+*Paramètres d'installation — channel fast, namespace keycloak*
+
+![Sélection namespace](screenshots/keycloak-operator-install-namespace.png)
+*Dropdown namespace — recherche "keycloak"*
+
+![Création projet keycloak](screenshots/keycloak-operator-create-project.png)
+*Création du projet/namespace keycloak*
+
+![Configuration finale](screenshots/keycloak-operator-install-final.png)
+*Configuration finale avant installation*
+
+![Installation en cours](screenshots/keycloak-operator-installing.png)
+*"Installing Operator" en cours*
+
+![Operator ready](screenshots/keycloak-operator-succeeded-console.png)
+*"Installed operator: ready for use" ✅*
+
+### 2. Validation Operator
+
+![CSV Succeeded](screenshots/keycloak-operator-csv-succeeded.png)
+*`oc get csv -n keycloak` → Phase: Succeeded*
+
+![Operator ready for use](screenshots/keycloak-operator-ready.png)
+*Console — Operator ready for use*
+
+![Installed Operators](screenshots/keycloak-operator-installed.png)
+*Vue Installed Operators — namespace keycloak — Succeeded ✅*
+
+### 3. Instance Keycloak
+
+![Page login Keycloak](screenshots/keycloak-login-page.png)
+*Console Keycloak accessible sur `https://keycloak.apps.sno.okd.lab`*
+
+### 4. Configuration Realm et Client
+
+![Création realm okd](screenshots/keycloak-create-realm.png)
+*Formulaire création realm — Realm name: okd*
+
+![Realm okd créé](screenshots/keycloak-realm-okd-created.png)
+*"Realm created successfully" — realm okd actif*
+
+![Client general settings](screenshots/keycloak-client-general-settings.png)
+*Client openshift — General settings — Client type: OpenID Connect*
+
+![Client capability config](screenshots/keycloak-client-capability-config.png)
+*Client openshift — Client authentication: On, Standard flow: ✅*
+
+![Client login settings](screenshots/keycloak-client-login-settings.png)
+*Client openshift — Valid redirect URIs: `https://oauth-openshift.apps.sno.okd.lab/*`*
+
+![Client openshift configuré](screenshots/keycloak-client-openshift.png)
+*Vue complète du client openshift configuré*
+
+![Client credentials](screenshots/keycloak-client-credentials.png)
+*Onglet Credentials — Client Secret récupéré*
