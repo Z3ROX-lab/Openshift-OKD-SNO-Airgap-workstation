@@ -293,3 +293,11 @@ Entrée dans `/etc/hosts` WSL2 et `C:\Windows\System32\drivers\etc\hosts` :
 
 ![Client credentials](screenshots/keycloak-client-credentials.png)
 *Onglet Credentials — Client Secret récupéré*
+
+### 5. Validation SSO OKD ↔ Keycloak
+
+![Bouton login Keycloak OKD](screenshots/okd-login-keycloak-button.png)
+*Page login OKD — bouton "keycloak" visible aux côtés de "kube:admin"*
+
+![Console OKD connectée via Keycloak](screenshots/okd-console-keycloak-sso-success.png)
+*Console OKD — utilisateur `admin-okd` connecté via SSO Keycloak ✅*
