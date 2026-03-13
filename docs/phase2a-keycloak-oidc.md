@@ -1,26 +1,68 @@
 # Phase 2a — Keycloak OIDC : Identity Provider OKD SNO
 
+## Pourquoi Keycloak comme IDP ?
+
+OKD ne gère pas nativement les utilisateurs. Il dispose d'un **OAuth Server intégré** dont le seul rôle est de déléguer l'authentification à un **Identity Provider (IDP)** externe. Par défaut, seul le compte temporaire `kubeadmin` existe — ce n'est pas viable pour un vrai cluster.
+
+**Keycloak** est l'IDP open-source de référence dans l'écosystème Red Hat / Kubernetes. Il centralise :
+- La gestion des utilisateurs et des groupes
+- L'authentification (username/password, MFA, fédération AD/LDAP)
+- L'émission de tokens JWT via le protocole **OIDC (OpenID Connect)**
+
+En configurant Keycloak comme IDP OIDC d'OKD, on obtient un SSO complet : un seul compte pour accéder à la console OKD, la CLI `oc`, ArgoCD, Vault, et toutes les applications du cluster.
+
+## Comment ça fonctionne — schéma simplifié
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        AUTHENTIFICATION                      │
+│                                                              │
+│   Utilisateur                                                │
+│       │                                                      │
+│       │  1. "je veux accéder à OKD"                         │
+│       ▼                                                      │
+│   Console OKD / oc CLI                                       │
+│       │                                                      │
+│       │  2. redirect → OAuth Server OKD                      │
+│       ▼                                                      │
+│   oauth-openshift.apps.sno.okd.lab                          │
+│   (OAuth Server OKD)                                         │
+│       │                                                      │
+│       │  3. "je ne sais pas qui tu es, va chez Keycloak"    │
+│       ▼                                                      │
+│   keycloak.apps.sno.okd.lab/realms/okd                      │
+│   (Keycloak IDP)                                             │
+│       │                                                      │
+│       │  4. login/password → émission JWT token              │
+│       ▼                                                      │
+│   oauth-openshift.apps.sno.okd.lab                          │
+│       │                                                      │
+│       │  5. token validé → session OKD créée                 │
+│       ▼                                                      │
+│   Console OKD / oc CLI  ✅ connecté                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                        SÉPARATION DES RÔLES                  │
+│                                                              │
+│   Keycloak  →  QUI ES-TU ?     (authentification)           │
+│   OKD RBAC  →  QUE PEUX-TU FAIRE ? (autorisation)           │
+│                                                              │
+│   Exemple :                                                  │
+│   admin-okd  ──Keycloak──▶  JWT token                       │
+│              ──OKD──▶  cluster-admin role                    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Pourquoi OIDC et pas SAML ou autre ?**
+
+OIDC (OpenID Connect) est le protocole moderne basé sur OAuth2. Il est natif dans Kubernetes/OKD, léger, et utilise des JWT tokens facilement validables. SAML est plus lourd et plutôt utilisé pour les applications legacy enterprise.
+
 ## Objectif
 
 Déployer Keycloak 26.5.5 sur OKD SNO via l'Operator Hub et le configurer comme Identity Provider OIDC pour la console OKD et la CLI `oc`.
-
-## Architecture
-
-```
-Utilisateur
-    │
-    ▼
-Console OKD / oc CLI
-    │  OAuth2 Authorization Code Flow
-    ▼
-oauth-openshift.apps.sno.okd.lab  (OAuth Server OKD)
-    │  OIDC redirect
-    ▼
-keycloak.apps.sno.okd.lab/realms/okd  (Keycloak)
-    │  JWT token
-    ▼
-OKD API Server  (validation token)
-```
 
 ## Composants déployés
 
