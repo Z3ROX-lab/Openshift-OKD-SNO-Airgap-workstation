@@ -2,8 +2,6 @@
 # =============================================================================
 # 00-subscription.yaml — OLM Subscription : External Secrets Operator
 # =============================================================================
-# Bootstrap : oc apply -f manifests/eso/00-subscription.yaml
-# =============================================================================
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
@@ -13,5 +11,5 @@ spec:
   channel: stable
   installPlanApproval: Automatic
   name: external-secrets-operator
-  source: operatorhubio-catalog
+  source: community-operators
   sourceNamespace: openshift-marketplace
