@@ -52,7 +52,7 @@ ui:
 
 # Agent Injector — injecte les secrets Vault dans les pods via sidecar
 injector:
-  enabled: true
+  enabled: false
   resources:
     requests:
       memory: 64Mi
