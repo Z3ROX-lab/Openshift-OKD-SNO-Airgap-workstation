@@ -1,0 +1,19 @@
+---
+# =============================================================================
+# 02-auth-delegator.yaml — ClusterRoleBinding pour Vault TokenReview
+# =============================================================================
+# Nécessaire pour Kubernetes auth — permet à Vault de valider les SA tokens
+# Appliqué manuellement car ClusterRoleBinding = ressource cluster-level
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-server-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: vault
+    namespace: vault
