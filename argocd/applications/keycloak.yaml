@@ -1,0 +1,40 @@
+---
+# =============================================================================
+# keycloak.yaml — ArgoCD Application : Keycloak Operator + Instance
+# =============================================================================
+# Note : Keycloak a été installé initialement via OperatorHub avant ArgoCD.
+#        Cette Application adopte les ressources existantes (syncPolicy manual)
+#        et assure la cohérence GitOps pour les phases suivantes.
+#
+# Ressources gérées :
+#   - manifests/keycloak/02-keycloak-instance.yaml  (CR Keycloak)
+#   - manifests/keycloak/03-client-secret.yaml      (placeholder secret)
+#   - manifests/keycloak/04-oauth-cluster.yaml      (OAuth CR OKD)
+#
+# Note : 01-tls-secret.sh est un script shell — non géré par ArgoCD.
+#        À exécuter manuellement après chaque reboot si nécessaire.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keycloak
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+    targetRevision: HEAD
+    path: manifests/keycloak
+    directory:
+      exclude: '*.sh'   # Exclure les scripts shell
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keycloak
+  syncPolicy:
+    # Manual sync — Keycloak déjà installé via OperatorHub
+    # Passer en automated une fois la migration GitOps complète (Phase 4)
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
