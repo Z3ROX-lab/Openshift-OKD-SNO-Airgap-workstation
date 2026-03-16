@@ -1,6 +1,9 @@
 ---
 # =============================================================================
-# eso.yaml — ArgoCD Application : External Secrets Operator
+# eso.yaml — ArgoCD Application : External Secrets Operator via OLM
+# =============================================================================
+# Installation via Subscription OLM — pattern enterprise OpenShift
+# OLM gère les ClusterRoles/CRDs, ArgoCD gère la config
 # =============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -11,19 +14,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  sources:
-    # Source 1 : Helm chart officiel ESO
-    - repoURL: https://charts.external-secrets.io
-      chart: external-secrets
-      targetRevision: 0.10.0
-      helm:
-        releaseName: external-secrets
-        valueFiles:
-          - $values/manifests/eso/values.yaml
-    # Source 2 : values.yaml depuis le repo GitHub
-    - repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
-      targetRevision: HEAD
-      ref: values
+  source:
+    repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+    targetRevision: HEAD
+    path: manifests/eso
+    directory:
+      include: '01-subscription.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: external-secrets
