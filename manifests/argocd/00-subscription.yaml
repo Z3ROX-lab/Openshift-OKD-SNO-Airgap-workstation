@@ -1,0 +1,19 @@
+---
+# =============================================================================
+# 00-subscription.yaml — OLM Subscription : ArgoCD Operator
+# =============================================================================
+# Bootstrap : oc apply -f manifests/argocd/00-subscription.yaml
+# Ensuite   : oc apply -f manifests/argocd/root-app.yaml
+# =============================================================================
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: argocd-operator
+  namespace: openshift-operators
+spec:
+  channel: alpha
+  installPlanApproval: Automatic
+  name: argocd-operator
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  startingCSV: argocd-operator.v0.17.0
