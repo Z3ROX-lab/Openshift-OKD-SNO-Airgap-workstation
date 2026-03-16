@@ -29,6 +29,10 @@ spec:
     - repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
       targetRevision: HEAD
       ref: values
+    # Source 3 : ressources OpenShift-specific (Route, etc.)
+    - repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+      targetRevision: HEAD
+      path: manifests/vault/extras
   destination:
     server: https://kubernetes.default.svc
     namespace: vault
