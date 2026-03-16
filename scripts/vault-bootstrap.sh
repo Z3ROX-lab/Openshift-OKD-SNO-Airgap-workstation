@@ -15,7 +15,7 @@ echo "🔐 Bootstrap Vault..."
 
 # Fonction helper
 vault_exec() {
-  oc exec -it ${VAULT_POD} -n ${VAULT_NS} -- \
+  oc exec -i ${VAULT_POD} -n ${VAULT_NS} -- \
     env VAULT_TOKEN=${VAULT_TOKEN} vault "$@"
 }
 
