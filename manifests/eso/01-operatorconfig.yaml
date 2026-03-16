@@ -2,10 +2,9 @@
 # =============================================================================
 # 01-operatorconfig.yaml — ESO OperatorConfig instance
 # =============================================================================
-# Déclenche le déploiement des pods ESO par l'opérateur OLM
-# =============================================================================
 apiVersion: operator.external-secrets.io/v1alpha1
 kind: OperatorConfig
 metadata:
   name: cluster
   namespace: external-secrets
+spec: {}
