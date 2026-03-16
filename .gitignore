@@ -12,13 +12,18 @@
 **/.terraform.lock.hcl
 **/terraform.tfvars
 
-# Secrets
+# Secrets — fichiers contenant de vraies valeurs sensibles
 **/*.pem
 **/*.key
 **/*.crt
-**/*secret*
-**/*password*
-**/*token*
+**/*-secret-values.yaml
+**/*.secret.yaml
+**/*.password.yaml
+**/*.token.yaml
+
+# Variables d'environnement
+.env
+.env.*
 
 # oc-mirror workspace
 **/oc-mirror-workspace/
