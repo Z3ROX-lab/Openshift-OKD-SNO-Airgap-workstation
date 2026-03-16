@@ -6,8 +6,6 @@
 #   export KEYCLOAK_ADMIN_PASSWORD="mon-password"
 #   export KEYCLOAK_CLIENT_SECRET="mon-secret"
 #   ./scripts/vault-bootstrap.sh
-#
-# Sans export → valeurs CHANGEME (à remplacer manuellement dans l'UI Vault)
 # =============================================================================
 set -e
 
@@ -28,7 +26,9 @@ vault_exec() {
 echo "📋 Configuration Kubernetes auth..."
 vault_exec auth enable kubernetes 2>/dev/null || echo "  → Déjà activé"
 vault_exec write auth/kubernetes/config \
-  kubernetes_host="https://kubernetes.default.svc"
+  kubernetes_host="https://kubernetes.default.svc" \
+  kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+  token_reviewer_jwt=@/var/run/secrets/kubernetes.io/serviceaccount/token
 
 # -----------------------------------------------------------------------------
 # 2. Secrets Engine KV v2
@@ -59,7 +59,7 @@ POLICY
 echo "👤 Création des roles..."
 
 vault_exec write auth/kubernetes/role/keycloak \
-  bound_service_account_names=keycloak \
+  bound_service_account_names=default \
   bound_service_account_namespaces=keycloak \
   policies=keycloak-policy \
   ttl=24h
@@ -93,9 +93,3 @@ echo ""
 echo "✅ Vault bootstrap terminé !"
 echo "   UI    : https://vault.apps.sno.okd.lab"
 echo "   Token : root"
-echo ""
-if grep -q "CHANGEME" <<< "${KEYCLOAK_ADMIN_PASSWORD}${KEYCLOAK_CLIENT_SECRET}${ARGOCD_GITHUB_TOKEN}"; then
-  echo "⚠️  Certains secrets sont à valeur CHANGEME."
-  echo "   Mets à jour les vraies valeurs dans l'UI Vault ou via :"
-  echo "   export KEYCLOAK_ADMIN_PASSWORD=xxx && ./scripts/vault-bootstrap.sh"
-fi
