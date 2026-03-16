@@ -2,9 +2,6 @@
 # =============================================================================
 # eso.yaml — ArgoCD Application : External Secrets Operator via OLM
 # =============================================================================
-# Installation via Subscription OLM — pattern enterprise OpenShift
-# OLM gère les ClusterRoles/CRDs, ArgoCD gère la config
-# =============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -19,7 +16,7 @@ spec:
     targetRevision: HEAD
     path: manifests/eso
     directory:
-      include: '01-subscription.yaml'
+      include: '00-subscription.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: external-secrets
