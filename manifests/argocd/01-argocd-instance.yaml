@@ -1,0 +1,30 @@
+---
+# =============================================================================
+# 01-argocd-instance.yaml — Instance ArgoCD avec proxy pour accès GitHub
+# =============================================================================
+# Namespace : openshift-operators (forcé par l'operator community — all namespaces)
+# Route créée automatiquement par l'operator
+# URL : https://argocd-server-openshift-operators.apps.sno.okd.lab
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: openshift-operators
+spec:
+  server:
+    route:
+      enabled: true
+  dex:
+    openShiftOAuth: true
+  repo:
+    env:
+      # Proxy HTTP via tinyproxy sur le node OKD (ovn-k8s-mp0 = 10.128.0.2)
+      # Nécessaire car OVN SNO ne configure pas de SNAT par défaut
+      # Le TLS handshake échoue sans proxy à cause de la fragmentation MTU Geneve
+      - name: HTTPS_PROXY
+        value: "http://10.128.0.2:8888"
+      - name: HTTP_PROXY
+        value: "http://10.128.0.2:8888"
+      - name: NO_PROXY
+        value: "10.128.0.0/14,172.30.0.0/16,192.168.241.0/24,.cluster.local,.sno.okd.lab,kubernetes.default.svc"
