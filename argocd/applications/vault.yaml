@@ -1,0 +1,41 @@
+---
+# =============================================================================
+# vault.yaml — ArgoCD Application : HashiCorp Vault via Helm chart officiel
+# =============================================================================
+# Source  : repo Helm HashiCorp (https://helm.releases.hashicorp.com)
+# Chart   : vault v0.28.0 (Vault 1.17.x)
+# Values  : manifests/vault/values.yaml (depuis repo GitHub)
+# Dest    : namespace vault (créé automatiquement)
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: vault
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    # Source 1 : Helm chart officiel HashiCorp
+    - repoURL: https://helm.releases.hashicorp.com
+      chart: vault
+      targetRevision: 0.28.0
+      helm:
+        releaseName: vault
+        valueFiles:
+          - $values/manifests/vault/values.yaml
+    # Source 2 : values.yaml depuis le repo GitHub
+    - repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: vault
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
