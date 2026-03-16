@@ -16,7 +16,7 @@ spec:
     targetRevision: HEAD
     path: manifests/eso
     directory:
-      include: '00-subscription.yaml'
+      include: '{00-subscription.yaml,01-operatorconfig.yaml}'
   destination:
     server: https://kubernetes.default.svc
     namespace: external-secrets
