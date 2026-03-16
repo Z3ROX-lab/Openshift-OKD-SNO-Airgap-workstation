@@ -8,24 +8,21 @@
 #     En production : mode HA avec Integrated Storage (Raft) +
 #     auto-unseal via Azure Key Vault ou AWS KMS.
 # =============================================================================
-
 global:
   enabled: true
-
 server:
   dev:
     enabled: true
     devRootToken: "root"   # Token fixe pour le lab — NE PAS UTILISER en prod
-
+  authDelegator:
+    enabled: false         # Désactivé pour ArgoCD namespaced mode
   # Route OKD via ingress
   ingress:
     enabled: false   # On utilise une Route OKD directement
-
   # Service Account pour l'auth Kubernetes
   serviceAccount:
     create: true
     name: vault
-
   # Resources adaptées au lab (SNO limité)
   resources:
     requests:
@@ -34,29 +31,18 @@ server:
     limits:
       memory: 512Mi
       cpu: 500m
-
   # Readiness probe
   readinessProbe:
     enabled: true
     path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
-
   # Liveness probe
   livenessProbe:
     enabled: true
     path: /v1/sys/health?standbyok=true
     initialDelaySeconds: 60
-
 ui:
   enabled: true
   serviceType: ClusterIP
-
-# Agent Injector — injecte les secrets Vault dans les pods via sidecar
+# Agent Injector — désactivé pour ArgoCD namespaced mode
 injector:
   enabled: false
-  resources:
-    requests:
-      memory: 64Mi
-      cpu: 50m
-    limits:
-      memory: 128Mi
-      cpu: 100m
