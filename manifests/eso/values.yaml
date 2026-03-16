@@ -1,0 +1,14 @@
+# =============================================================================
+# values.yaml — Helm values External Secrets Operator
+# =============================================================================
+# Chart : external-secrets/external-secrets v0.10.0
+# =============================================================================
+installCRDs: true
+replicaCount: 1
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 100m
+  limits:
+    memory: 256Mi
+    cpu: 200m
