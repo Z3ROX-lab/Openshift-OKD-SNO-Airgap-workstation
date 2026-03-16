@@ -16,9 +16,16 @@ server:
     devRootToken: "root"   # Token fixe pour le lab — NE PAS UTILISER en prod
   authDelegator:
     enabled: false         # Désactivé pour ArgoCD namespaced mode
-  # Route OKD via ingress
+  # Route OKD
+  route:
+    enabled: true
+    host: vault.apps.sno.okd.lab
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+  # Ingress désactivé — on utilise la Route OKD
   ingress:
-    enabled: false   # On utilise une Route OKD directement
+    enabled: false
   # Service Account pour l'auth Kubernetes
   serviceAccount:
     create: true
