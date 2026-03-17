@@ -1,402 +1,332 @@
-# Phase 2b — ArgoCD + HashiCorp Vault
+# Phase 2b — ArgoCD App of Apps + HashiCorp Vault + ESO
 
-## Pourquoi ArgoCD avant Vault ?
+## Vue d'ensemble
 
-Jusqu'ici, tout a été appliqué manuellement (`oc apply -f`, `helm install`). C'est acceptable
-pour bootstrapper les composants de base (Keycloak, certificats), mais ce n'est pas scalable
-et ce n'est pas représentatif d'un cluster enterprise réel.
-
-À partir de cette phase, **ArgoCD devient le seul vecteur de déploiement**. Cela signifie :
-
-- Les manifests dans le repo Git sont la **source de vérité** (GitOps)
-- Aucun `oc apply` ou `helm install` manuel en production
-- Tout changement passe par un commit → ArgoCD synchronise automatiquement
-- L'état du cluster est **auditable, reproductible, et versionné**
-
-Vault est le premier composant déployé via ArgoCD — ce qui valide le pattern GitOps
-end-to-end pour toutes les phases suivantes.
+Cette phase met en place le pattern **GitOps complet** sur le cluster OKD SNO :
+- ArgoCD en mode **App of Apps** — une seule source de vérité Git
+- HashiCorp Vault — gestion centralisée des secrets
+- External Secrets Operator (ESO) — synchronisation Vault → K8s Secrets
 
 ---
 
-## Pourquoi Vault n'est pas dans l'OperatorHub OKD ?
-
-Lors de la recherche `vault` dans OperatorHub, trois résultats apparaissent :
-
-| Operator | Provider | Rôle |
-|----------|----------|------|
-| cert-manager | cert-manager maintainers | Gestion certificats TLS — sans rapport |
-| External Secrets Operator | External Secrets | Synchro secrets externes → K8s Secrets |
-| **Vault Config Operator** | Red Hat Community of Practice | Configure Vault (policies, auth, engines) |
-
-**HashiCorp Vault lui-même n'est pas dans l'OperatorHub OKD.** Voici pourquoi :
-
-HashiCorp considère que le **déploiement de Vault** est une responsabilité infrastructure,
-pas applicative. Vault est un système de sécurité critique dont le cycle de vie
-(installation, mise à jour, unseal, disaster recovery) doit être maîtrisé explicitement
-par les équipes infra — pas délégué à un operator automatique.
-
-C'est la même logique que pour les bases de données critiques : on ne déploie pas PostgreSQL
-en production via un operator automatique sans contrôle, on utilise Helm avec des values
-précisément configurées.
-
-Le **Vault Config Operator** (Red Hat CoP) suppose donc que Vault est **déjà déployé**
-et se concentre uniquement sur sa configuration déclarative via des CRDs Kubernetes :
+## Architecture générale
 
 ```
-Vault Config Operator gère :         Vault Config Operator ne gère PAS :
-─────────────────────────────         ──────────────────────────────────────
-✅ VaultAuthMethod (kubernetes)       ❌ Déploiement des pods Vault
-✅ VaultPolicy (HCL policies)         ❌ Initialisation et unseal
-✅ VaultSecretEngine (kv, pki...)     ❌ TLS et certificats Vault
-✅ VaultRole                          ❌ HA et clustering Vault
-✅ VaultSecret (sync → K8s Secret)    ❌ Backup et restauration
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          GITHUB REPO (GitOps Source of Truth)                   │
+│                                                                                 │
+│  manifests/                          argocd/applications/                       │
+│  ├── argocd/                         ├── keycloak.yaml                          │
+│  │   ├── 00-subscription.yaml        ├── keycloak-secrets.yaml                  │
+│  │   ├── 01-argocd-instance.yaml     ├── vault.yaml                             │
+│  │   ├── 02-repo-helm-hashicorp.yaml ├── eso.yaml                               │
+│  │   └── root-app.yaml               └── (futures apps...)                      │
+│  ├── keycloak/                                                                  │
+│  │   ├── 00-namespace.yaml           scripts/                                   │
+│  │   ├── 00-subscription.yaml        └── vault-bootstrap.sh                     │
+│  │   ├── 01-tls-secret.sh (manuel)                                              │
+│  │   ├── 02-keycloak-instance.yaml                                              │
+│  │   ├── 03-client-secret.yaml                                                  │
+│  │   └── 04-oauth-cluster.yaml (manuel)                                         │
+│  ├── vault/                                                                     │
+│  │   ├── 00-namespace.yaml                                                      │
+│  │   ├── values.yaml                                                            │
+│  │   └── extras/                                                                │
+│  │       ├── 01-route.yaml                                                      │
+│  │       └── 02-auth-delegator.yaml (manuel)                                    │
+│  └── eso/                                                                       │
+│      ├── 00-namespace.yaml                                                      │
+│      ├── 00-subscription.yaml                                                   │
+│      ├── 01-operatorconfig.yaml                                                 │
+│      ├── 01-secret-store.yaml                                                   │
+│      └── 02-external-secret.yaml                                                │
+└───────────────────────────┬─────────────────────────────────────────────────────┘
+                            │
+          BOOTSTRAP (2 commandes manuelles une seule fois)
+          oc apply -f manifests/argocd/00-subscription.yaml
+          oc apply -f manifests/argocd/root-app.yaml
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              CLUSTER OKD SNO                                    │
+│                                                                                 │
+│  NS: openshift-operators                                                        │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  ArgoCD (App of Apps)                                                     │  │
+│  │                                                                           │  │
+│  │  root-app ──────────────────────────────────────────────────────────┐    │  │
+│  │     │ détecte argocd/applications/                                  │    │  │
+│  │     ├──► Application keycloak          ──► NS: keycloak             │    │  │
+│  │     ├──► Application keycloak-secrets  ──► NS: keycloak             │    │  │
+│  │     ├──► Application vault             ──► NS: vault                │    │  │
+│  │     └──► Application eso               ──► NS: external-secrets     │    │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │  │
+│                                                                               │  │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────────┐   │  │
+│  │  NS: keycloak    │  │  NS: vault        │  │  NS: external-secrets    │   │  │
+│  │                  │  │                   │  │                          │   │  │
+│  │  Keycloak Pod    │  │  vault-0 (dev)    │  │  ESO Operator            │   │  │
+│  │  ┌────────────┐  │  │  ┌─────────────┐ │  │  ┌────────────────────┐  │   │  │
+│  │  │ Realm: okd │  │  │  │ KV v2       │ │  │  │ external-secrets   │  │   │  │
+│  │  │ Client:    │  │  │  │ secret/     │ │  │  │ cert-controller    │  │   │  │
+│  │  │ openshift  │  │  │  │ ├─keycloak/ │ │  │  │ webhook            │  │   │  │
+│  │  └────────────┘  │  │  │ │ ├─config  │ │  │  └────────────────────┘  │   │  │
+│  │                  │  │  │ │ ├─admin   │ │  │                          │   │  │
+│  │  SecretStore     │  │  │ │ └─client  │ │  │  OperatorConfig          │   │  │
+│  │  ┌────────────┐  │  │  │ └─argocd/  │ │  │  └── cluster             │   │  │
+│  │  │vault-backend│ │  │  │   └─github  │ │  │                          │   │  │
+│  │  │Valid ✅    │  │  │  ├─────────────┤ │  └──────────────────────────┘   │  │
+│  │  └─────┬──────┘  │  │  │ Auth:       │ │                                 │  │
+│  │        │         │  │  │ kubernetes/ │ │                                 │  │
+│  │  ExternalSecret  │  │  │ ├─config    │ │                                 │  │
+│  │  ┌────────────┐  │  │  │ │ CA cert ✅│ │                                 │  │
+│  │  │keycloak-   │  │  │  │ └─role/     │ │                                 │  │
+│  │  │secrets     │  │  │  │   keycloak  │ │                                 │  │
+│  │  │Synced ✅   │  │  │  └─────────────┘ │                                 │  │
+│  │  └─────┬──────┘  │  │                   │                                 │  │
+│  │        │ génère  │  │  Route OKD         │                                 │  │
+│  │        ▼         │  │  vault.apps.       │                                 │  │
+│  │  K8s Secret      │  │  sno.okd.lab ✅    │                                 │  │
+│  │  keycloak-vault  │  └───────────────────┘                                 │  │
+│  │  -secrets ✅     │                                                         │  │
+│  └──────────────────┘                                                         │  │
+└───────────────────────────────────────────────────────────────────────────────┘  │
+                                                                                   │
+┌──────────────────────────────────────────────────────────────────────────────────┘
+│  POST-BOOTSTRAP (manuels, une seule fois ou après reboot)
+│
+│  source .env && ./scripts/vault-bootstrap.sh  → Kubernetes auth, policies, secrets
+│  ./manifests/keycloak/01-tls-secret.sh        → TLS secret Keycloak (après reboot)
+│  oc apply -f manifests/keycloak/04-oauth-cluster.yaml → OAuth OKD (une seule fois)
+│  oc apply -f manifests/vault/extras/02-auth-delegator.yaml → CRB TokenReview (une fois)
+└──────────────────────────────────────────────────────────────────────────────────
 ```
 
 ---
 
-## Architecture de déploiement
+## Pattern App of Apps
+
+ArgoCD utilise le pattern **App of Apps** — une seule Application racine (`root-app`)
+pointe vers le dossier `argocd/applications/` et crée automatiquement toutes les
+sous-applications.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    GITOPS PATTERN                            │
-│                                                              │
-│  Git Repo (Z3ROX-lab)                                        │
-│  └── gitops/                                                 │
-│      ├── argocd/                                             │
-│      │   └── applications/                                   │
-│      │       ├── vault.yaml          ← ArgoCD App            │
-│      │       └── vault-config.yaml   ← ArgoCD App            │
-│      └── manifests/                                          │
-│          ├── vault/                                          │
-│          │   ├── values.yaml         ← Helm values Vault     │
-│          │   └── helm-release.yaml                           │
-│          └── vault-config/                                   │
-│              ├── auth-kubernetes.yaml                        │
-│              ├── secret-engine-kv.yaml                       │
-│              └── policy-okd.yaml                             │
-│                          │                                   │
-│                          │ sync                              │
-│                          ▼                                   │
-│  ArgoCD (openshift-gitops)                                   │
-│      │                                                       │
-│      ├── App: vault ──────────────────────────────────────┐  │
-│      │   Helm chart: hashicorp/vault                      │  │
-│      │   Namespace: vault                                 │  │
-│      │                                                    ▼  │
-│      │                                           Vault Pods  │
-│      │                                           (dev mode)  │
-│      │                                                       │
-│      └── App: vault-config ───────────────────────────────┐  │
-│          Vault Config Operator CRDs                       │  │
-│          Namespace: vault                                 ▼  │
-│                                               Auth K8s ✅    │
-│                                               KV Engine ✅   │
-│                                               Policies ✅    │
-└─────────────────────────────────────────────────────────────┘
+oc apply -f manifests/argocd/root-app.yaml  (une seule fois)
+        ↓
+ArgoCD détecte argocd/applications/
+        ↓
+Crée automatiquement : keycloak, vault, eso, keycloak-secrets
+        ↓
+Chaque app sync ses propres manifests/Helm charts
 ```
+
+**Avantage** : ajouter une nouvelle application = créer un fichier YAML dans
+`argocd/applications/`. ArgoCD la détecte et la déploie automatiquement.
 
 ---
 
-## Sources de vérité — GitHub, GitLab CI et Harbor
+## Pattern OLM Subscription GitOps
 
-Une question naturelle quand on a un GitLab Runner dans OKD et ArgoCD qui synchronise
-depuis GitHub : **a-t-on deux sources de vérité ?**
+Sur OpenShift, chaque opérateur installé via OperatorHub est tracé dans Git via
+une `Subscription` OLM. ArgoCD applique la Subscription → OLM installe l'opérateur.
 
-Non — chaque composant a un rôle distinct et non overlapping.
+```
+manifests/<composant>/
+├── 00-namespace.yaml      → namespace + label argocd managed-by
+├── 00-subscription.yaml   → OLM Subscription (remplace le clic UI OperatorHub)
+└── 01-xxx.yaml            → CRs de l'opérateur
+```
 
-### Les trois sources de vérité distinctes
+**Règle** : tout opérateur installé via OperatorHub doit avoir un `00-subscription.yaml`
+dans le repo. Le cluster est ainsi 100% reproductible depuis Git.
 
-| Composant | Type | Ce qu'il contient |
-|-----------|------|-------------------|
-| **GitHub** | Source de vérité infra | Manifests K8s, Helm values, ArgoCD Apps, policies |
-| **Harbor** | Source de vérité artefacts | Images OCI versionnées, Helm charts OCI |
-| **GitLab CI** | Pipeline de transformation | Pas une source de vérité — produit des artefacts |
+---
 
-GitLab CI n'est **jamais** une source de vérité. C'est un pipeline de transformation :
-il prend du code source, produit une image, la pousse dans Harbor, puis met à jour
-un tag dans GitHub. Il ne parle jamais directement au cluster.
+## HashiCorp Vault — configuration
 
-### Flux complet GitOps — du commit au déploiement
+### Choix : mode dev pour le lab
+
+Vault est déployé en mode dev (stockage mémoire, auto-unseal, token root fixe `root`).
+
+| Mode dev | Mode Raft (prod) |
+|----------|-----------------|
+| Stockage mémoire | Stockage persistant sur disque |
+| Auto-unseal | Unseal manuel ou Azure Key Vault |
+| Token root fixe | Tokens dynamiques |
+| Données perdues au reboot | Données persistantes |
+
+En production : mode Raft + auto-unseal via Azure Key Vault ou Transit Vault.
+
+### Architecture Vault dans le cluster
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│           FLUX COMPLET : CODE → IMAGE → CLUSTER                     │
-│                                                                      │
-│  Développeur                                                         │
-│      │                                                               │
-│      │  1. git push (code applicatif)                               │
-│      ▼                                                               │
-│  GitLab (gitlab.com free tier)                                       │
-│      │                                                               │
-│      │  2. déclenche pipeline GitLab CI                             │
-│      ▼                                                               │
-│  GitLab Runner (pod dans OKD)                                        │
-│      │                                                               │
-│      ├── 3a. build image → Kaniko (sans Docker daemon)              │
-│      ├── 3b. scan CVE   → Trivy                                     │
-│      ├── 3c. sign image → Cosign                                    │
-│      │                                                               │
-│      │  4. push image + signature                                   │
-│      ▼                                                               │
-│  Harbor (harbor.okd.lab)  ◄──────────────────────────────────────┐  │
-│      │                                                            │  │
-│      │  scan Trivy automatique à chaque push                     │  │
-│      │  stockage OCI : harbor.okd.lab/apps/myapp:v1.2.3          │  │
-│      │                                                            │  │
-│      │  5. pipeline met à jour le manifest GitHub                 │  │
-│      ▼                                                            │  │
-│  GitHub (Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation)         │  │
-│      │                                                            │  │
-│      │  manifests/apps/myapp/deployment.yaml                     │  │
-│      │    image: harbor.okd.lab/apps/myapp:v1.2.3  ← commit auto │  │
-│      │                                                            │  │
-│      │  6. ArgoCD détecte le changement (polling ou webhook)     │  │
-│      ▼                                                            │  │
-│  ArgoCD (openshift-gitops)                                        │  │
-│      │                                                            │  │
-│      │  7. sync → applique le manifest mis à jour                │  │
-│      ▼                                                            │  │
-│  OKD — Kubernetes API                                             │  │
-│      │                                                            │  │
-│      │  8. Kyverno vérifie la signature Cosign de l'image        │  │
-│      │     avant autorisation du déploiement                     │  │
-│      │                                                            │  │
-│      │  9. pull image depuis Harbor ─────────────────────────────┘  │
-│      ▼                                                               │
-│  Pod applicatif ✅ — image signée, scannée, versionnée              │
-│                                                                      │
-│ ┌──────────────────────────────────────────────────────────────┐    │
-│ │  RÈGLE GITOPS STRICTE :                                       │    │
-│ │  Le cluster ne reçoit d'ordres QUE depuis GitHub via ArgoCD  │    │
-│ │  GitLab CI ne parle JAMAIS directement à l'API Kubernetes    │    │
-│ │  Tout changement d'état du cluster = commit dans GitHub      │    │
-│ └──────────────────────────────────────────────────────────────┘    │
+│                        VAULT (mode dev)                             │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                   AUTH METHODS                              │   │
+│  │                                                             │   │
+│  │  ┌─────────────────────────────────────────────────────┐   │   │
+│  │  │           kubernetes/                               │   │   │
+│  │  │  ┌─────────────────┐  ┌─────────────────────┐      │   │   │
+│  │  │  │  role/keycloak  │  │    role/argocd      │      │   │   │
+│  │  │  │  SA: default    │  │  SA: argocd-server  │      │   │   │
+│  │  │  │  NS: keycloak   │  │  NS: openshift-ops  │      │   │   │
+│  │  │  └────────┬────────┘  └──────────┬──────────┘      │   │   │
+│  │  └───────────┼──────────────────────┼─────────────────┘   │   │
+│  └──────────────┼──────────────────────┼─────────────────────┘   │
+│                 │ policies=             │ policies=                │
+│                 ▼                       ▼                          │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                      POLICIES                               │  │
+│  │  ┌──────────────────────┐  ┌──────────────────────┐        │  │
+│  │  │   keycloak-policy    │  │    argocd-policy     │        │  │
+│  │  │ secret/keycloak/* RO │  │  secret/argocd/* RO  │        │  │
+│  │  └──────────┬───────────┘  └──────────┬───────────┘        │  │
+│  └─────────────┼────────────────────────┼─────────────────────┘  │
+│                │ autorise accès à        │                         │
+│                ▼                         ▼                         │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                   SECRETS ENGINE KV v2                      │  │
+│  │                                                             │  │
+│  │   secret/keycloak/config     secret/argocd/github           │  │
+│  │   secret/keycloak/admin      (token GitHub)                 │  │
+│  │   secret/keycloak/client-secrets                            │  │
+│  └─────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Pourquoi ce pattern est important en enterprise
+### Bootstrap Vault après reboot
 
-En contexte grands comptes (défense, banque, télécom), ce pattern répond à trois exigences :
+En mode dev, Vault repart à zéro à chaque redémarrage. Le script
+`scripts/vault-bootstrap.sh` reconfigure tout automatiquement :
 
-**Auditabilité** — chaque déploiement est tracé dans Git avec un auteur, une date,
-et un diff lisible. L'audit trail est complet sans effort supplémentaire.
-
-**Séparation des accès** — les développeurs poussent du code sur GitLab, jamais
-de credentials Kubernetes. Seul ArgoCD a accès au cluster, via un ServiceAccount
-dédié avec des droits minimaux.
-
-**Reproductibilité** — l'état exact du cluster à n'importe quel instant est
-reconstituable depuis Git + Harbor. En cas de disaster recovery, on repointe
-ArgoCD sur le repo et le cluster se reconstruit seul.
-
----
-
-## Séparation des responsabilités — récapitulatif
-
+```bash
+source .env && ./scripts/vault-bootstrap.sh
 ```
-┌──────────────────┬────────────────────────────────────────────┐
-│ Composant        │ Responsabilité                             │
-├──────────────────┼────────────────────────────────────────────┤
-│ ArgoCD           │ Déployer et synchroniser TOUT le reste     │
-│                  │ depuis Git                                 │
-├──────────────────┼────────────────────────────────────────────┤
-│ Helm chart Vault │ Déployer les pods Vault (infrastructure)   │
-│ (via ArgoCD)     │ Init, unseal, TLS, storage backend         │
-├──────────────────┼────────────────────────────────────────────┤
-│ Vault Config     │ Configurer Vault de façon déclarative      │
-│ Operator         │ Auth Kubernetes, policies HCL, KV engine   │
-│ (via ArgoCD)     │ Sync secrets Vault → K8s Secrets           │
-├──────────────────┼────────────────────────────────────────────┤
-│ Vault            │ Stocker et distribuer les secrets          │
-│                  │ aux workloads du cluster                   │
-└──────────────────┴────────────────────────────────────────────┘
+
+Variables d'environnement requises (dans `.env`, jamais commité) :
+```bash
+export KEYCLOAK_ADMIN_PASSWORD="ton-vrai-password"
+export KEYCLOAK_CLIENT_SECRET="ton-vrai-client-secret"
+export ARGOCD_GITHUB_TOKEN="ton-vrai-token"
 ```
 
 ---
 
-## Flow Vault Agent Injector — comment un workload consomme un secret
+## External Secrets Operator (ESO)
+
+ESO synchronise les secrets de Vault vers des K8s Secrets Kubernetes.
+
+### Flow ESO ↔ Vault ↔ Keycloak
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│              VAULT AGENT INJECTOR — SECRET INJECTION             │
-│                                                                  │
-│  Développeur                                                     │
-│      │                                                           │
-│      │  1. commit manifest avec annotation Vault                │
-│      │     vault.hashicorp.com/agent-inject: "true"             │
-│      │     vault.hashicorp.com/role: "okd-app"                  │
-│      ▼                                                           │
-│  ArgoCD → applique le manifest                                   │
-│      │                                                           │
-│      │  2. crée le Pod                                           │
-│      ▼                                                           │
-│  Kubernetes API                                                  │
-│      │                                                           │
-│      │  3. webhook mutating → Vault Agent Injector              │
-│      ▼                                                           │
-│  Vault Agent Injector                                            │
-│      │                                                           │
-│      │  4. injecte un init container + sidecar dans le Pod      │
-│      ▼                                                           │
-│  Pod (init container vault-agent)                                │
-│      │                                                           │
-│      │  5. s'authentifie auprès de Vault                        │
-│      │     via le ServiceAccount K8s (auth method kubernetes)   │
-│      ▼                                                           │
-│  Vault                                                           │
-│      │                                                           │
-│      │  6. valide le token ServiceAccount + policy              │
-│      │  7. retourne le secret (ex: DB_PASSWORD)                 │
-│      ▼                                                           │
-│  Pod (sidecar vault-agent)                                       │
-│      │                                                           │
-│      │  8. écrit le secret dans /vault/secrets/config           │
-│      │     (volume partagé dans le Pod)                         │
-│      ▼                                                           │
-│  Container applicatif                                            │
-│      │                                                           │
-│      │  9. lit le secret depuis /vault/secrets/config           │
-│      │     → jamais de secret dans les env vars ou K8s Secrets  │
-│      ▼                                                           │
-│  Application ✅ — secret consommé sans jamais transiter         │
-│                    par etcd ou Git                               │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  ZERO SECRET DANS :                                       │   │
-│  │  ❌ Git (pas de Secret YAML commité)                      │   │
-│  │  ❌ etcd (pas de K8s Secret en clair)                     │   │
-│  │  ❌ Variables d'environnement (pas d'env injection)       │   │
-│  │  ✅ Uniquement dans /vault/secrets/ — volume éphémère     │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         GITOPS (GitHub)                             │
+│                                                                     │
+│  argocd/applications/keycloak-secrets.yaml                          │
+│  manifests/eso/                                                     │
+│  ├── 01-secret-store.yaml    → connexion Vault                      │
+│  └── 02-external-secret.yaml → mapping Vault → K8s Secret          │
+└──────────────────────────┬──────────────────────────────────────────┘
+                           │ ArgoCD sync
+                           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CLUSTER OKD                                 │
+│                                                                     │
+│  NS: external-secrets                                               │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  External Secrets Operator (ESO)                             │  │
+│  │                                                              │  │
+│  │  SA: cluster-external-secrets                                │  │
+│  │  1. lit les ExternalSecret CRs dans tous les namespaces      │  │
+│  │  2. s'authentifie auprès de Vault (Kubernetes auth)          │  │
+│  │  3. récupère les secrets                                     │  │
+│  │  4. crée/met à jour les K8s Secrets                          │  │
+│  └──────────┬───────────────────────────────┬───────────────────┘  │
+│             │ auth (SA token)                │ crée/sync            │
+│             ▼                                ▼                      │
+│  ┌─────────────────────┐      ┌──────────────────────────────────┐ │
+│  │  NS: vault          │      │  NS: keycloak                    │ │
+│  │                     │      │                                  │ │
+│  │  SecretStore        │      │  ExternalSecret                  │ │
+│  │  ┌───────────────┐  │      │  ┌──────────────────────────┐   │ │
+│  │  │ provider:     │  │      │  │ secretStoreRef: vault    │   │ │
+│  │  │  vault:       │  │      │  │ target: keycloak-secrets │   │ │
+│  │  │   path:secret │  │      │  │ data:                    │   │ │
+│  │  │   auth:       │  │      │  │  - remoteRef:            │   │ │
+│  │  │    kubernetes │  │      │  │    key: keycloak/admin   │   │ │
+│  │  └───────────────┘  │      │  └──────────┬───────────────┘   │ │
+│  │                     │      │             │ génère             │ │
+│  │  Vault KV v2        │      │  ┌──────────▼───────────────┐   │ │
+│  │  secret/keycloak/*  │      │  │  K8s Secret              │   │ │
+│  │  ├── admin          │      │  │  keycloak-vault-secrets   │   │ │
+│  │  ├── config         │      │  │  ├── username: admin     │   │ │
+│  │  └── client-secrets │      │  │  └── password: ****      │   │ │
+│  └─────────────────────┘      └──────────────────────────────────┘ │
+│                                         ↺ refresh toutes les 1h    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Plan de déploiement
+## Ressources cluster-level — gestion manuelle
 
-### Étape 1 — OpenShift GitOps Operator (ArgoCD)
+Certaines ressources sont **cluster-level** et incompatibles avec ArgoCD en mode
+namespaced. Elles sont exclues du sync ArgoCD et appliquées manuellement une seule fois.
 
-Installation via OperatorHub — **Red Hat OpenShift GitOps** (ArgoCD packagé Red Hat).
-
-- Namespace : `openshift-gitops` (créé automatiquement)
-- Route ArgoCD : `https://openshift-gitops-server-openshift-gitops.apps.sno.okd.lab`
-- Auth : intégration Keycloak OIDC (realm `okd`, client `argocd`)
-
-### Étape 2 — Connexion repo Git → ArgoCD
-
-Configurer ArgoCD pour utiliser `Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation`
-comme source de vérité.
-
-### Étape 3 — Helm chart Vault via ArgoCD Application
-
-```yaml
-# gitops/applications/vault.yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: vault
-  namespace: openshift-gitops
-spec:
-  project: default
-  source:
-    repoURL: https://helm.releases.hashicorp.com
-    chart: vault
-    targetRevision: 0.28.0
-    helm:
-      valueFiles:
-        - values.yaml
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: vault
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-```
-
-### Étape 4 — Vault Config Operator via ArgoCD
-
-Installation du Vault Config Operator depuis OperatorHub via ArgoCD (Subscription CRD).
-Configuration : auth Kubernetes, KV secret engine v2, policies.
-
-### Étape 5 — Intégration Vault ↔ Keycloak
-
-- Client OIDC `vault` dans realm `okd` Keycloak
-- Vault auth method OIDC → Keycloak
-- Accès UI Vault via SSO
-
----
-
-## Choix techniques
-
-**Vault mode dev vs prod pour le lab**
-
-Pour ce lab portfolio, Vault sera déployé en **mode dev** (stockage en mémoire, auto-unseal,
-token root fixe). Ce n'est pas un choix de production — en enterprise, Vault utilise un
-backend HA (Consul, Integrated Storage/Raft) avec auto-unseal via AWS KMS ou Azure Key Vault.
-
-Le mode dev permet de se concentrer sur les intégrations (Kubernetes auth, OIDC, Agent
-Injector) sans la complexité opérationnelle de l'unseal et du clustering.
-
-**Helm chart version**
-
-HashiCorp maintient le chart officiel `hashicorp/vault`. Version cible : `0.28.x`
-(Vault 1.17.x). C'est la version utilisée dans les contextes enterprise actuels.
-
----
-
-## Fichiers à créer dans le repo
-
-```
-gitops/
-├── argocd/
-│   └── projects/
-│       └── lab-project.yaml          # AppProject OKD lab
-└── applications/
-    ├── vault.yaml                    # ArgoCD App → Helm chart Vault
-    └── vault-config-operator.yaml    # ArgoCD App → Subscription OLM
-
-manifests/
-└── vault/
-    ├── values.yaml                   # Helm values Vault (dev mode)
-    ├── auth-kubernetes.yaml          # VaultAuthMethod CR
-    ├── secret-engine-kv.yaml         # VaultSecretEngine CR
-    └── policy-okd.yaml               # VaultPolicy CR
-```
-
----
-
-## Notes importantes
-
-- ArgoCD sera lui-même intégré à Keycloak SSO (client `argocd` dans realm `okd`)
-  une fois Vault déployé — afin d'avoir un SSO complet console OKD + ArgoCD + Vault
-- Le Vault Config Operator nécessite que Vault soit initialisé et unsealed avant
-  de pouvoir créer des ressources — ordre de déploiement à respecter
-- Les secrets Vault (root token, unseal keys) ne doivent **jamais** être commités dans Git
-- En Phase 4, SealedSecrets chiffrera les secrets Kubernetes au repos dans Git
+| Fichier | Type | Commande |
+|---------|------|----------|
+| `manifests/keycloak/04-oauth-cluster.yaml` | OAuth OKD | `oc apply -f` une seule fois |
+| `manifests/vault/extras/02-auth-delegator.yaml` | ClusterRoleBinding | `oc apply -f` une seule fois |
+| `manifests/keycloak/01-tls-secret.sh` | TLS Secret | Script manuel après reboot |
 
 ---
 
 ## Screenshots
 
-*(à compléter au fil du déploiement)*
+### ArgoCD — Applications Dashboard (Phase 2b complète)
 
-### 1. OperatorHub — recherche vault
+![ArgoCD Applications](screenshots/phase2b-argocd-dashboard.png)
 
-![OperatorHub vault](screenshots/vault-operatorhub-search.png)
-*OperatorHub — recherche "vault" : 3 résultats, HashiCorp Vault absent, Vault Config Operator (Red Hat CoP) présent*
+*5 applications Synced + Healthy : eso, keycloak, keycloak-secrets, root-app, vault*
 
-### 2. OpenShift GitOps Operator
-<!-- ![GitOps Operator](screenshots/gitops-operator-hub.png) -->
+---
 
-### 3. ArgoCD UI
-<!-- ![ArgoCD UI](screenshots/argocd-ui-dashboard.png) -->
+## Procédure de bootstrap from scratch
 
-### 4. ArgoCD Application Vault
-<!-- ![ArgoCD App Vault](screenshots/argocd-app-vault-synced.png) -->
+```bash
+# 1. Installer ArgoCD via OLM
+oc apply -f manifests/argocd/00-subscription.yaml
+# Attendre que l'opérateur soit Running
+oc get pods -n openshift-operators | grep argocd
 
-### 5. Vault UI
-<!-- ![Vault UI](screenshots/vault-ui-login.png) -->
+# 2. Démarrer le pattern App of Apps
+oc apply -f manifests/argocd/root-app.yaml
+# ArgoCD déploie automatiquement keycloak, vault, eso
+
+# 3. Labelliser les namespaces (si pas encore fait)
+oc label namespace vault argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace keycloak argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace external-secrets argocd.argoproj.io/managed-by=openshift-operators
+
+# 4. Appliquer les ressources cluster-level (une seule fois)
+oc apply -f manifests/keycloak/04-oauth-cluster.yaml
+oc apply -f manifests/vault/extras/02-auth-delegator.yaml
+
+# 5. Bootstrap Vault
+source .env && ./scripts/vault-bootstrap.sh
+
+# 6. TLS Keycloak (après chaque reboot)
+./manifests/keycloak/01-tls-secret.sh
+```
+
+---
+
+## Accès aux UIs
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| ArgoCD | https://argocd-server-openshift-operators.apps.sno.okd.lab | admin / voir secret argocd-initial-admin-secret |
+| Vault | https://vault.apps.sno.okd.lab | Token: root |
+| Keycloak | https://keycloak.apps.sno.okd.lab | admin / voir .env |
