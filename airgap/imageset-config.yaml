@@ -15,5 +15,4 @@ mirror:
             - name: alpha
   additionalImages:
     - name: docker.io/hashicorp/vault:1.16.1
-    - name: quay.io/grafana/grafana:10.4.0
-    - name: docker.io/grafana/loki:2.9.4
+    - name: docker.io/grafana/loki:3.5.5
