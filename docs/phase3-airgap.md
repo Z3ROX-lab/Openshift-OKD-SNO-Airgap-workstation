@@ -1,391 +1,359 @@
-# Phase 3 — Airgap Simulation
+# Phase 3 — Airgap : oc-mirror + Harbor + Grafana + Loki
 
-> Reproduire un environnement déconnecté type grands comptes (défense, banque, télécom)
+> Simulation d'un environnement déconnecté type grands comptes
+> OKD 4.15 SNO — Harbor 2.11 — oc-mirror v4.15
+> Mars 2026
 
 ---
 
-## Concept
+## Concept airgap
 
-Un cluster **airgap** est un cluster sans accès Internet direct. Toutes les images de conteneurs, les Helm charts et les mises à jour passent par des services **internes au cluster**.
+Un cluster **airgap** est un cluster sans accès Internet direct. Toutes les images,
+Helm charts et operators passent par des services **internes au réseau**.
 
 C'est la configuration standard sur les environnements sensibles :
-- 🏦 Banques / Finance
-- 🛡️ Défense / Gouvernement
+- 🏦 Banques / Finance (DORA, PCI-DSS)
+- 🛡️ Défense / Gouvernement (ANSSI, SecNumCloud)
 - 📡 Télécommunications (Nokia, Orange, Telefónica)
 
 ---
 
-## Architecture cible
+## Architecture complète
 
 ```
-AVANT coupure Internet (WSL2, hôte)        APRÈS coupure Internet
-────────────────────────────────           ──────────────────────────────────────
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PLAN AIRGAP — PHASE 3                                    │
+│                                                                             │
+│  OBJECTIF : OKD peut fonctionner SANS Internet                              │
+│  Toutes les images → Harbor (192.168.241.20)                                │
+└─────────────────────────────────────────────────────────────────────────────┘
 
-oc-mirror
-  ├── quay.io → OKD release images         ArgoCD
-  ├── quay.io → community-operator-index     ├── Git source → GitLab.apps.sno.okd.lab ✅
-  ├── docker.io/goharbor → Harbor images     ├── Helm charts → Harbor.apps.sno.okd.lab ✅
-  └── helm charts → Harbor OCI              └── Images → Harbor.apps.sno.okd.lab ✅
-        ↓
-  mirror-registry WSL2 (temporaire)        OKD SNO (réseau isolé)
-        ↓                                    ├── Harbor (registry permanent)
-  OKD installe Harbor via OperatorHub          │   ├── Images OCI
-        ↓                                      │   ├── Helm charts OCI
-  Images migrées → Harbor OpenShift            │   ├── Scan CVE (Trivy intégré)
-        ↓                                      │   └── Signing (Cosign)
-  mirror-registry WSL2 supprimé               ├── GitLab (source of truth ArgoCD)
-                                              │   ├── Manifests Kubernetes
-                                              │   ├── Helm values.yaml
-                                              │   └── Kustomize overlays
-                                              └── OperatorHub (CatalogSource mirror)
-                                                  → Harbor, ArgoCD, Vault, Grafana...
+ETAPE 1 — oc-mirror (WSL2, connecté Internet)
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│  Internet                    WSL2 (948G dispo)                              │
+│                                                                             │
+│  quay.io ──────────────────► oc-mirror v4.15                               │
+│  docker.io ────────────────► │                                             │
+│  ghcr.io ──────────────────► │  ImageSetConfiguration :                    │
+│                              │  airgap/imageset-config.yaml                │
+│                              │  ├── operators:                             │
+│                              │  │   ├── grafana-operator (v5)              │
+│                              │  │   └── loki-operator (alpha)              │
+│                              │  └── additionalImages:                      │
+│                              │      ├── hashicorp/vault:1.16.1             │
+│                              │      └── grafana/loki:3.5.5                 │
+│                              │                                             │
+│                              ▼                                             │
+│                    Images mirrorées (~1.5 Go) :                            │
+│                    ├── grafana/grafana:12.4.1                               │
+│                    ├── grafana/grafana-operator:v5.22.2                    │
+│                    ├── grafana/loki:3.5.5                                  │
+│                    ├── grafana/loki-operator:0.9.0                         │
+│                    ├── hashicorp/vault:1.16.1                              │
+│                    ├── brancz/kube-rbac-proxy:v0.18.1                     │
+│                    ├── observatorium/api:latest                            │
+│                    └── observatorium/opa-openshift:latest                  │
+└──────────────────────────────────────────────────────────────────────────┬─┘
+                                                                           │
+                              Push direct registry-to-registry
+                              docker://harbor.okd.lab/okd-mirror
+                                                                           │
+ETAPE 2 — Harbor reçoit les images                                         │
+┌──────────────────────────────────────────────────────────────────────────▼─┐
+│                                                                             │
+│  Harbor VM (192.168.241.20)                                                 │
+│  harbor.okd.lab                                                             │
+│                                                                             │
+│  Project: okd-mirror (Private)                                              │
+│  ├── okd-mirror/grafana/grafana:12.4.1          ✅                          │
+│  ├── okd-mirror/grafana/grafana-operator:v5.22.2 ✅                         │
+│  ├── okd-mirror/grafana/loki:3.5.5              ✅                          │
+│  ├── okd-mirror/grafana/loki-operator:0.9.0     ✅                          │
+│  ├── okd-mirror/hashicorp/vault:1.16.1          ✅                          │
+│  ├── okd-mirror/brancz/kube-rbac-proxy:v0.18.1  ✅                         │
+│  └── okd-mirror/operatorhubio/catalog:latest    ✅ (catalog index)          │
+│                                                                             │
+│  Trivy → scan CVE automatique à chaque push ✅                              │
+└──────────────────────────────────────────────────────────────────────────┬─┘
+                                                                           │
+ETAPE 3 — Configurer OKD pour Harbor (ICSP + CatalogSource)               │
+┌──────────────────────────────────────────────────────────────────────────▼─┐
+│                                                                             │
+│  oc apply -f oc-mirror-workspace/results-*/imageContentSourcePolicy.yaml   │
+│  │                                                                          │
+│  │  ImageContentSourcePolicy (ICSP) = règle de redirection transparente    │
+│  │  ┌────────────────────────────────────────────────────────────────┐     │
+│  │  │  quay.io/operatorhubio/catalog → harbor.okd.lab/okd-mirror/.. │     │
+│  │  │  docker.io/grafana/grafana     → harbor.okd.lab/okd-mirror/.. │     │
+│  │  │  ghcr.io/grafana/...           → harbor.okd.lab/okd-mirror/.. │     │
+│  │  │  docker.io/hashicorp/vault     → harbor.okd.lab/okd-mirror/.. │     │
+│  │  └────────────────────────────────────────────────────────────────┘     │
+│  │  Les pods pullent depuis quay.io/docker.io → OKD redirige vers Harbor  │
+│  │  Transparence totale — aucun changement dans les manifests              │
+│  │                                                                          │
+│  oc apply -f oc-mirror-workspace/results-*/catalogSource-*.yaml            │
+│  │                                                                          │
+│  │  CatalogSource = index operators depuis Harbor                           │
+│  │  OperatorHub pointe sur harbor.okd.lab/okd-mirror au lieu d'Internet   │
+│  │                                                                          │
+│  oc patch OperatorHub cluster --disable-all-default-sources=true           │
+│  │                                                                          │
+│  │  Désactive les CatalogSources Internet (community-operators, etc.)      │
+└──────────────────────────────────────────────────────────────────────────┬─┘
+                                                                           │
+ETAPE 4 — Installer Grafana + Loki via ArgoCD (airgap)                    │
+┌──────────────────────────────────────────────────────────────────────────▼─┐
+│                                                                             │
+│  GitHub ──► ArgoCD (via tinyproxy) ──► OKD                                 │
+│                                                                             │
+│  argocd/applications/grafana.yaml   → installe grafana-operator via OLM   │
+│  argocd/applications/loki.yaml      → installe loki-operator via OLM      │
+│                                                                             │
+│  OLM pull catalog depuis harbor.okd.lab/okd-mirror (ICSP) ✅               │
+│  Pods pull images depuis harbor.okd.lab/okd-mirror (ICSP) ✅               │
+│  Zéro accès Internet requis ✅                                              │
+└──────────────────────────────────────────────────────────────────────────┬─┘
+                                                                           │
+RESULTAT FINAL                                                             │
+┌──────────────────────────────────────────────────────────────────────────▼─┐
+│                                                                             │
+│  AVANT airgap                    APRES airgap                               │
+│                                                                             │
+│  quay.io ──► OKD                 Harbor ──► OKD (ICSP)                    │
+│  docker.io ──► OKD               Harbor ──► OKD (ICSP)                    │
+│  OperatorHub ──► Internet        OperatorHub ──► Harbor (CatalogSource)   │
+│  ArgoCD ──► github.com           ArgoCD ──► github.com (tinyproxy)        │
+│                                                                             │
+│  Stack observabilité complète en airgap :                                  │
+│  ├── Prometheus    ✅ built-in OKD                                          │
+│  ├── Alertmanager  ✅ built-in OKD                                          │
+│  ├── Thanos        ✅ built-in OKD                                          │
+│  ├── Grafana       ✅ installé depuis Harbor en airgap                     │
+│  └── Loki          ✅ installé depuis Harbor en airgap                     │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
-
-**GitLab + Harbor = les deux piliers airgap.**
-- **Harbor** : registry images + registry Helm OCI + scan CVE + signing
-- **GitLab** : source of truth Git pour ArgoCD — remplace github.com en interne
 
 ---
 
-## Pourquoi pas directement Harbor dans l'ISO ?
-
-Harbor n'est pas dans quay.io — ses images viennent de `docker.io/goharbor/` et `ghcr.io`. Il faut donc les mirror **avant** de couper Internet via `oc-mirror` (qui supporte multi-source), puis installer Harbor via OperatorHub depuis le mirror local.
-
-### Problème bootstrap (poule/œuf)
+## Prérequis accomplis
 
 ```
-Pour installer Harbor → il faut des images Harbor
-Pour avoir des images Harbor → il faut un registry
-Pour avoir un registry → il faut Harbor
+✅ oc-mirror v4.15 installé
+✅ imageset-config.yaml créé et commité (airgap/imageset-config.yaml)
+✅ CA Harbor ajoutée au store système WSL2
+✅ Projet okd-mirror créé dans Harbor
+✅ docker login harbor.okd.lab effectué
+✅ Dry-run validé — 1.543 GiB à mirror
 ```
-
-**Solution** : mirror-registry WSL2 comme registry temporaire de bootstrap, puis Harbor devient le registry permanent.
 
 ---
 
-## Étapes détaillées
+## ImageSetConfiguration
 
-### Phase 3a — Préparer oc-mirror (connecté)
+```yaml
+# airgap/imageset-config.yaml
+apiVersion: mirror.openshift.io/v1alpha2
+kind: ImageSetConfiguration
+storageConfig:
+  local:
+    path: /home/zerotrust/work/oc-mirror/workspace
+mirror:
+  operators:
+    - catalog: quay.io/operatorhubio/catalog:latest
+      packages:
+        - name: grafana-operator
+          channels:
+            - name: v5
+        - name: loki-operator
+          channels:
+            - name: alpha
+  additionalImages:
+    - name: docker.io/hashicorp/vault:1.16.1
+    - name: docker.io/grafana/loki:3.5.5
+```
+
+### Images détectées automatiquement par oc-mirror
+
+| Image | Source | Version | Via |
+|-------|--------|---------|-----|
+| grafana | docker.io/grafana | 12.4.1 | operator bundle |
+| grafana-operator | ghcr.io/grafana | v5.22.2 | operator bundle |
+| loki | docker.io/grafana | 3.5.5 | bundle + additionalImages |
+| loki-operator | docker.io/grafana | 0.9.0 | operator bundle |
+| vault | docker.io/hashicorp | 1.16.1 | additionalImages |
+| kube-rbac-proxy | quay.io/brancz | v0.18.1 | operator bundle |
+| observatorium/api | quay.io/observatorium | latest | operator bundle |
+| opa-openshift | quay.io/observatorium | latest | operator bundle |
+
+**Total : ~1.543 GiB**
+
+---
+
+## Commandes oc-mirror
+
+### Installation oc-mirror
 
 ```bash
-# Télécharger le plugin oc-mirror
-wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/oc-mirror.tar.gz
+# Télécharger oc-mirror v4.15
+wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.15.0/oc-mirror.tar.gz
 tar xvf oc-mirror.tar.gz
 sudo mv oc-mirror /usr/local/bin/
 chmod +x /usr/local/bin/oc-mirror
+
+# Dépendance libgpgme
+sudo apt install -y libgpgme11
+
+# Vérification
+oc-mirror version
 ```
 
-### Phase 3b — Configurer l'ImageSetConfig
-
-```yaml
-# airgap/imagesets/okd-4.17-imageset.yaml
-kind: ImageSetConfiguration
-apiVersion: mirror.openshift.io/v1alpha2
-storageConfig:
-  local:
-    path: /tmp/oc-mirror-workspace
-mirror:
-
-  # OKD release images (quay.io)
-  platform:
-    channels:
-      - name: stable-4.17
-        type: okd
-
-  # Operators depuis community-operator-index
-  # On ne mirore que les operators dont on a besoin (pas tout l'index ~200 Go)
-  operators:
-    - catalog: registry.redhat.io/redhat/community-operator-index:v4.17
-      packages:
-        - name: harbor-operator
-        - name: argocd-operator
-        - name: vault
-        - name: kyverno
-        - name: grafana-operator
-        - name: loki-operator
-        - name: gitlab-operator-kubernetes
-
-  # Images Harbor (docker.io/goharbor — pas dans quay.io)
-  additionalImages:
-    - name: docker.io/goharbor/harbor-operator:v1.3.0
-    - name: docker.io/goharbor/harbor-core:v2.10.0
-    - name: docker.io/goharbor/harbor-portal:v2.10.0
-    - name: docker.io/goharbor/harbor-registryctl:v2.10.0
-    - name: docker.io/goharbor/registry-photon:v2.10.0
-    - name: docker.io/goharbor/harbor-db:v2.10.0
-    - name: docker.io/goharbor/redis-photon:v2.10.0
-    - name: docker.io/goharbor/trivy-adapter-photon:v2.10.0
-    - name: docker.io/goharbor/nginx-photon:v2.10.0
-    - name: quay.io/minio/minio:latest
-    - name: quay.io/prometheus/prometheus:latest
-```
-
-### Phase 3c — Installer mirror-registry WSL2 (bootstrap temporaire)
+### Ajouter la CA Harbor au store système
 
 ```bash
-# Télécharger mirror-registry (Quay léger — images dans quay.io ✅)
-wget https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/mirror-registry/latest/mirror-registry.tar.gz
-tar xvf mirror-registry.tar.gz
-
-# Installer
-sudo ./mirror-registry install \
-  --quayHostname mirror.sno.okd.lab \
-  --quayRoot /opt/mirror-registry
-
-# Ajouter le CA cert au trust store WSL2
-sudo cp /opt/mirror-registry/quay-rootCA/rootCA.pem \
-  /usr/local/share/ca-certificates/mirror-registry.crt
+scp harbor@192.168.241.20:~/harbor/certs/ca.crt /tmp/harbor-ca.crt
+sudo cp /tmp/harbor-ca.crt /usr/local/share/ca-certificates/harbor-ca.crt
 sudo update-ca-certificates
+
+# Vérification
+curl -v https://harbor.okd.lab/v2/ 2>&1 | grep "SSL certificate verify"
+# → SSL certificate verify ok ✅
 ```
 
-### Phase 3d — Mirror toutes les images
+### Dry-run (validation sans téléchargement)
 
 ```bash
-# Authentification
-podman login mirror.sno.okd.lab \
-  -u init -p $(cat /opt/mirror-registry/quay-config/quay-config.yaml | grep PASSWORD | awk '{print $2}')
-
-# Lancer le mirroring (~8-15 Go selon les operators sélectionnés)
-oc-mirror --config airgap/imagesets/okd-4.17-imageset.yaml \
-  docker://mirror.sno.okd.lab
-
-# oc-mirror génère automatiquement dans oc-mirror-workspace/results-*/ :
-# - ImageContentSourcePolicy → redirige docker.io/goharbor → mirror.sno.okd.lab
-# - CatalogSource → community-operator-index depuis le mirror
+oc-mirror --config airgap/imageset-config.yaml \
+  --dry-run \
+  docker://harbor.okd.lab/okd-mirror
 ```
 
-### Phase 3e — Appliquer les ICSP et CatalogSource au cluster
+### Mirror réel
 
 ```bash
-# ImageContentSourcePolicy (redirige les pulls d'images)
+cd ~/work/oc-mirror
+
+oc-mirror --config ~/work/Openshift-OKD-SNO-Airgap-workstation/airgap/imageset-config.yaml \
+  docker://harbor.okd.lab/okd-mirror 2>&1 | tee /tmp/oc-mirror-run.txt
+```
+
+### Appliquer ICSP et CatalogSource
+
+```bash
+# Résultats générés dans oc-mirror-workspace/results-*/
+ls oc-mirror-workspace/results-*/
+
+# Appliquer la politique de redirection d'images
 oc apply -f oc-mirror-workspace/results-*/imageContentSourcePolicy.yaml
 
-# Désactiver les CatalogSources par défaut (pointent vers Internet)
-oc patch OperatorHub cluster --type json \
-  -p '[{"op": "add", "path": "/spec/disableAllDefaultSources", "value": true}]'
-
-# Appliquer le CatalogSource du mirror
+# Appliquer le catalogue d'operators depuis Harbor
 oc apply -f oc-mirror-workspace/results-*/catalogSource-*.yaml
+
+# Désactiver les sources Internet
+oc patch OperatorHub cluster --type json \
+  -p '[{"op":"add","path":"/spec/disableAllDefaultSources","value":true}]'
 ```
 
-### Phase 3f — Couper l'accès Internet de la VM
-
-```
-VMware Workstation → VM Settings → Network Adapter
-→ Changer VMnet8 (NAT) → VMnet1 (Host-only)
-```
-
-Valider que le cluster fonctionne toujours :
+### Vérification post-ICSP
 
 ```bash
+# Vérifier que le nœud redémarre bien (MachineConfig update)
 oc get nodes
-oc get co
-oc get pods -A | grep -v Running | grep -v Completed
-```
+oc get mcp
 
-### Phase 3g — Installer Harbor via OperatorHub
-
-Depuis la console OKD :
-
-```
-OperatorHub → Chercher "Harbor"
-→ Harbor Operator (community)
-→ Install
-→ Namespace : harbor-system
-→ Update channel : stable
-→ Install
-```
-
-> L'expérience UI est identique au mode connecté.
-> OLM pull depuis `mirror.sno.okd.lab` de façon transparente grâce à l'ICSP.
-
-Créer le CR HarborCluster :
-
-```yaml
-apiVersion: goharbor.io/v1beta1
-kind: HarborCluster
-metadata:
-  name: harbor
-  namespace: harbor-system
-spec:
-  version: v2.10.0
-  logLevel: info
-  expose:
-    core:
-      ingress:
-        host: harbor.apps.sno.okd.lab
-      tls:
-        auto:
-          commonName: harbor.apps.sno.okd.lab
-  externalURL: https://harbor.apps.sno.okd.lab
-  internalTLS:
-    enabled: true
-  imageChartStorage:
-    filesystem:
-      chartPersistentVolume:
-        claimName: harbor-chart-pvc
-      registryPersistentVolume:
-        claimName: harbor-registry-pvc
-  database:
-    kind: PostgreSQL
-    spec:
-      postgresql:
-        storage: 1Gi
-  cache:
-    kind: Redis
-    spec:
-      redis:
-        storage: 1Gi
-  trivy:
-    enabled: true          # Scan CVE automatique ✅
-    githubToken: ""
-  jobservice:
-    replicas: 1
-  registry:
-    replicas: 1
-```
-
-### Phase 3h — Migrer les images vers Harbor
-
-```bash
-# Script de migration mirror-registry → Harbor
-for image in $(skopeo list-tags docker://mirror.sno.okd.lab/goharbor); do
-  skopeo copy \
-    docker://mirror.sno.okd.lab/goharbor/${image} \
-    docker://harbor.apps.sno.okd.lab/okd/${image}
-done
-
-# Mettre à jour l'ICSP pour pointer sur Harbor (registry permanent)
-# mirror.sno.okd.lab → harbor.apps.sno.okd.lab
-```
-
-### Phase 3i — Configurer Harbor : Trivy + Cosign
-
-**Trivy (scan CVE automatique)**
-
-```
-Harbor UI → Administration → Interrogation Services
-→ Vulnerability → Enable auto-scan on push ✅
-→ Schedule : Hourly
-```
-
-**Cosign (signing des images)**
-
-```bash
-# Générer une clé de signing
-cosign generate-key-pair k8s://harbor-system/cosign-keys
-
-# Signer une image après push
-cosign sign --key k8s://harbor-system/cosign-keys \
-  harbor.apps.sno.okd.lab/okd/my-app:latest
-
-# Kyverno policy — vérifier la signature avant déploiement
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
-metadata:
-  name: verify-image-signature
-spec:
-  validationFailureAction: Enforce
-  rules:
-    - name: verify-signature
-      match:
-        resources:
-          kinds: [Pod]
-      verifyImages:
-        - imageReferences:
-            - "harbor.apps.sno.okd.lab/*"
-          attestors:
-            - entries:
-                - keys:
-                    kms: k8s://harbor-system/cosign-keys
-```
-
-### Phase 3j — Configurer ArgoCD pour airgap
-
-ArgoCD ne peut plus accéder à github.com ou aux Helm registries publics. Deux sources internes :
-
-**Source Git → GitLab interne**
-
-```yaml
-# ArgoCD Application
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: my-app
-  namespace: argocd
-spec:
-  source:
-    repoURL: https://gitlab.apps.sno.okd.lab/z3rox/my-app.git  # ✅ interne
-    targetRevision: main
-    path: k8s/overlays/prod
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: my-app
-```
-
-**Source Helm → Harbor OCI**
-
-```bash
-# Pousser un Helm chart dans Harbor avant coupure Internet
-helm pull hashicorp/vault --destination ./charts/
-helm push charts/vault-*.tgz oci://harbor.apps.sno.okd.lab/helm-charts
-```
-
-```yaml
-# ArgoCD Application avec Helm OCI
-spec:
-  source:
-    repoURL: oci://harbor.apps.sno.okd.lab/helm-charts  # ✅ interne
-    chart: vault
-    targetRevision: 0.27.0
-```
-
-### Phase 3k — Validation airgap complète
-
-```bash
-# 1. Cluster opérationnel
-oc get nodes && oc get co
-
-# 2. OperatorHub affiche les operators depuis le mirror
+# Vérifier les CatalogSources
 oc get catalogsource -n openshift-marketplace
 
-# 3. Harbor accessible
-curl -k https://harbor.apps.sno.okd.lab/api/v2.0/health
-
-# 4. Push d'une image test dans Harbor
-podman pull registry.access.redhat.com/ubi9/ubi:latest
-podman tag ubi9/ubi:latest harbor.apps.sno.okd.lab/test/ubi9:latest
-podman push harbor.apps.sno.okd.lab/test/ubi9:latest
-# → Trivy scan déclenché automatiquement ✅
-
-# 5. Vérifier le scan Trivy
-# Harbor UI → Projects → test → Repositories → ubi9 → Vulnerabilities
-
-# 6. ArgoCD sync depuis GitLab
-oc get applications -n argocd
-
-# 7. Mise à jour cluster en airgap
-oc-mirror --config airgap/imagesets/okd-4.17-imageset.yaml \
-  docker://harbor.apps.sno.okd.lab
-oc adm upgrade --to-image harbor.apps.sno.okd.lab/okd/release:4.17.1
+# Vérifier OperatorHub depuis la console
+# → Operators → OperatorHub → filtrer par "grafana" ou "loki"
+# → Doit apparaître depuis harbor.okd.lab
 ```
 
 ---
 
-## Résumé des composants airgap
+## Installation Grafana + Loki via ArgoCD (airgap)
 
-| Composant | Rôle | Source images |
-|-----------|------|--------------|
-| mirror-registry (WSL2) | Bootstrap temporaire | quay.io (avant coupure) |
-| Harbor (OpenShift) | Registry permanent — images + Helm OCI | Migré depuis mirror-registry |
-| Trivy (intégré Harbor) | Scan CVE automatique à chaque push | Dans Harbor |
-| Cosign | Signing + vérification images | Dans Harbor |
-| GitLab (OpenShift) | Source Git pour ArgoCD | Via OperatorHub mirror |
-| OperatorHub (mirror) | Installation operators sans Internet | CatalogSource mirror |
-| ImageContentSourcePolicy | Redirection transparente des pulls | Généré par oc-mirror |
+Une fois ICSP appliqué, on déploie via ArgoCD depuis Git :
+
+```bash
+# manifests/grafana/00-subscription.yaml
+# manifests/loki/00-subscription.yaml
+# argocd/applications/grafana.yaml
+# argocd/applications/loki.yaml
+```
+
+ArgoCD sync depuis GitHub (via tinyproxy) → OLM pull depuis Harbor (ICSP) → pods déployés.
 
 ---
 
-## Prochaine étape
+## Validation airgap complète
 
-→ [Phase 4 — Security & Scanning](phase4-security.md)
+```bash
+# 1. Cluster opérationnel sans Internet
+oc get nodes   # → Ready
+oc get co      # → tous Available
+
+# 2. OperatorHub depuis Harbor
+oc get catalogsource -n openshift-marketplace
+# → harbor.okd.lab comme source
+
+# 3. Grafana accessible
+oc get route -n grafana
+# → grafana.apps.sno.okd.lab
+
+# 4. Loki collecte les logs
+oc get pods -n loki
+# → Running
+
+# 5. Vault pod redémarre depuis Harbor
+oc delete pod vault-0 -n vault
+oc get pods -n vault
+# → image pullée depuis harbor.okd.lab via ICSP ✅
+```
+
+---
+
+## Note sur ArgoCD en airgap partiel
+
+Dans ce lab, ArgoCD continue d'accéder à GitHub via **tinyproxy** (10.128.0.2:8888).
+Ce n'est pas un airgap total — c'est un airgap **images uniquement**.
+
+Le vrai airgap Git complet nécessiterait GitLab installé dans le cluster
+(prévu en Phase 4), ce qui rendrait le cluster totalement autonome :
+
+```
+Airgap partiel (Phase 3) :
+  Images → Harbor ✅
+  Git    → GitHub via tinyproxy ⚠️
+
+Airgap total (Phase 4) :
+  Images → Harbor ✅
+  Git    → GitLab in-cluster ✅
+  CI/CD  → GitLab Runner in-cluster ✅
+```
+
+---
+
+## Problèmes rencontrés et solutions
+
+| Problème | Cause | Solution |
+|----------|-------|----------|
+| `x509: certificate signed by unknown authority` | CA Harbor non reconnue par oc-mirror | `sudo update-ca-certificates` avec ca.crt Harbor |
+| `BAD_REQUEST: invalid repository name` | Projet Harbor inexistant | Créer projet `okd-mirror` dans Harbor UI |
+| `channel does not exist: lokistack-1.0` | Mauvais channel loki-operator | Utiliser channel `alpha` |
+| `401 UNAUTHORIZED quay.io/grafana` | Version inexistante | Supprimer de additionalImages (inclus via bundle) |
+| `fatal: not a git repository` | Mauvais dossier courant | `cd ~/work/Openshift-OKD-SNO-Airgap-workstation` |
+
+---
+
+## Prochaine étape — Phase 4
+
+→ GitLab in-cluster (airgap Git complet)
+→ GitLab CI/CD pipeline (build → Harbor → OKD)
+→ Cosign + Kyverno enforcement
+→ Airgap total validé
+
+---
+
+*Projet `Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation`*
+*Phase 3 Airgap — Mars 2026*
