@@ -12,7 +12,7 @@ mirror:
             - name: v5
         - name: loki-operator
           channels:
-            - name: lokistack-1.0
+            - name: alpha
   additionalImages:
     - name: docker.io/hashicorp/vault:1.16.1
     - name: quay.io/grafana/grafana:10.4.0
