@@ -33,6 +33,8 @@ spec:
     - repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
       targetRevision: HEAD
       path: manifests/vault/extras
+      directory:
+        exclude: '02-auth-delegator.yaml'  # cluster-level, appliqué manuellement
   destination:
     server: https://kubernetes.default.svc
     namespace: vault
