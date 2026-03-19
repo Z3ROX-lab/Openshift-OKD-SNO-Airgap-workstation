@@ -139,13 +139,46 @@ RESULTAT FINAL                                                             │
 ## Prérequis accomplis
 
 ```
-✅ oc-mirror v4.15 installé
+✅ oc-mirror v4.15 installé + libgpgme11
+✅ CA Harbor ajoutée au store système WSL2 (update-ca-certificates)
 ✅ imageset-config.yaml créé et commité (airgap/imageset-config.yaml)
-✅ CA Harbor ajoutée au store système WSL2
-✅ Projet okd-mirror créé dans Harbor
+✅ Projet okd-mirror créé dans Harbor (Public + Trivy scan auto)
 ✅ docker login harbor.okd.lab effectué
 ✅ Dry-run validé — 1.543 GiB à mirror
+✅ Mirror réel — 4.62 GiB dans Harbor (Grafana + Loki + Vault + kube-bench + Prowler)
+✅ ICSP appliqué — MachineConfigPool UPDATED=True (reboot SNO ~5 min)
+✅ CatalogSource community-operators → Harbor (Option B transparente)
+✅ CA Harbor → image.config.openshift.io/cluster
+✅ community-operators Internet désactivé
+⏳ external-secrets-operator + keycloak-operator → oc-mirror run4 en cours
+❌ Grafana installé depuis Harbor (airgap)
+❌ Loki installé depuis Harbor (airgap)
+❌ kube-bench — rapport CIS Kubernetes Benchmark
+❌ Prowler — rapport conformité NIS2/ISO27001
+❌ Validation cluster sans Internet
 ```
+
+---
+
+## Screenshots
+
+### Harbor — Projet okd-mirror (4.62 GiB mirrored)
+
+![Harbor okd-mirror](screenshots/phase3-harbor-okd-mirror.png)
+
+*Projet okd-mirror dans Harbor — toutes les images mirrorées depuis quay.io/docker.io/ghcr.io*
+
+### CatalogSource créée
+
+![CatalogSource created](screenshots/phase3-catalogsource-created.png)
+
+*CatalogSource community-operators créée — pointe sur harbor.okd.lab (Option B)*
+
+### MachineConfigPool — ICSP appliqué
+
+![MCP Updated](screenshots/phase3-icsp-mcp-updated.png)
+
+*MachineConfigPool master UPDATED=True après reboot post-ICSP — redirection images active*
 
 ---
 
