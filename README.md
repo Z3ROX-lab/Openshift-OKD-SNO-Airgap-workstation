@@ -338,15 +338,18 @@ source .env && ./scripts/vault-bootstrap.sh
 
 ## 🔐 Accès aux UIs
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Console OKD | https://console-openshift-console.apps.sno.okd.lab | admin-okd / Keycloak |
-| ArgoCD | https://argocd-server-openshift-operators.apps.sno.okd.lab | admin |
-| Vault | https://vault.apps.sno.okd.lab | Token: root |
-| Keycloak | https://keycloak.apps.sno.okd.lab | admin |
-| Harbor | https://harbor.okd.lab | admin / Harbor12345! |
-| Prometheus | Console OKD → Observe → Metrics | - |
-| Alertmanager | Console OKD → Observe → Alerting | - |
+| Service | URL |
+|---------|-----|
+| Console OKD | https://console-openshift-console.apps.sno.okd.lab |
+| ArgoCD | https://argocd-server-openshift-operators.apps.sno.okd.lab |
+| Vault | https://vault.apps.sno.okd.lab |
+| Keycloak | https://keycloak.apps.sno.okd.lab |
+| Harbor | https://harbor.okd.lab |
+| Prometheus | Console OKD → Observe → Metrics |
+| Alertmanager | Console OKD → Observe → Alerting |
+
+> ⚠️ Les credentials sont stockés dans `.env` (non commité) et dans Vault.
+> Ne jamais commiter de credentials dans Git.
 
 ---
 
