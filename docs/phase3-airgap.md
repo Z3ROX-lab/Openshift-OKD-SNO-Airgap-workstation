@@ -136,6 +136,61 @@ RESULTAT FINAL                                                             │
 
 ---
 
+## Schéma flux GitOps airgap — Grafana + Loki
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║           GRAFANA + LOKI — DÉPLOIEMENT AIRGAP OKD SNO               ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+  WSL2 / Git                    Harbor VM                  OKD SNO
+  (192.168.241.1)               (192.168.241.20)           (192.168.241.10)
+  ┌─────────────┐               ┌──────────────────┐       ┌─────────────────────────────────┐
+  │             │               │                  │       │                                 │
+  │  GitHub     │               │  okd-mirror/     │       │  ┌─────────────────────────┐   │
+  │  repo       │               │  operatorhubio/  │       │  │  ArgoCD (root-app)      │   │
+  │             │               │  catalog:latest  │       │  │  openshift-operators    │   │
+  └─────────────┘               │                  │       │  │                         │   │
+        │                       │  operatorhubio/  │       │  │  watches                │   │
+        │  git push             │  grafana-operator│       │  │  argocd/applications/   │   │
+        │                       │                  │       │  │  ├── grafana.yaml  ──┐  │   │
+        ▼                       │  operatorhubio/  │       │  │  └── loki.yaml    ──┼─►│   │
+  ┌─────────────┐               │  loki-operator   │       │  └─────────────────────┼─┘│   │
+  │  GitHub     │               │                  │       │                        │   │   │
+  │  Z3ROX-lab/ │               │  grafana/grafana │       │  ┌─────────────────────▼─┐│   │
+  │  repo       │               │  grafana/loki    │       │  │  OLM                  ││   │
+  └─────────────┘               └────────┬─────────┘       │  │  openshift-marketplace││   │
+                                         │                  │  │                       ││   │
+                                         │  pull images     │  │  CatalogSource        ││   │
+                                         │◄─────────────────│  │  community-operators  ││   │
+                                         │                  │  │  → harbor.okd.lab/    ││   │
+                                         │  ✅ No Internet  │  │    okd-mirror/        ││   │
+                                         │     needed       │  │    operatorhubio/     ││   │
+                                         │                  │  │    catalog:latest     ││   │
+                                         │                  │  │                       ││   │
+                                         │                  │  │  PackageManifest      ││   │
+                                         │                  │  │  ├── grafana-operator ││   │
+                                         │                  │  │  └── loki-operator    ││   │
+                                         │                  │  └───────────┬───────────┘│   │
+                                         │                  │              │            │   │
+                                         │                  │  ┌───────────▼──────────┐ │   │
+                                         │                  │  │  grafana-operator ns │ │   │
+                                         │                  │  │  ├── OperatorGroup   │ │   │
+                                         │                  │  │  ├── Subscription    │ │   │
+                                         │                  │  │  └── CSV v5.22.2     │ │   │
+                                         │                  │  │                      │ │   │
+                                         │                  │  │  loki-operator ns    │ │   │
+                                         │                  │  │  ├── OperatorGroup   │ │   │
+                                         │                  │  │  ├── Subscription    │ │   │
+                                         │                  │  │  └── CSV v0.9.0      │ │   │
+                                         │                  │  └──────────────────────┘ │   │
+                                         │                  └───────────────────────────┘   │
+                                         └──────────────────────────────────────────────────┘
+                                                    ZERO INTERNET TRAFFIC ✅
+```
+
+---
+
 ## Prérequis accomplis
 
 ```
@@ -150,9 +205,8 @@ RESULTAT FINAL                                                             │
 ✅ CatalogSource community-operators → Harbor (Option B transparente)
 ✅ CA Harbor → image.config.openshift.io/cluster
 ✅ community-operators Internet désactivé
-⏳ external-secrets-operator + keycloak-operator → oc-mirror run4 en cours
-❌ Grafana installé depuis Harbor (airgap)
-❌ Loki installé depuis Harbor (airgap)
+✅ Grafana Operator v5.22.2 installé via OLM airgap
+✅ Loki Operator v0.9.0 installé via OLM airgap
 ❌ kube-bench — rapport CIS Kubernetes Benchmark
 ❌ Prowler — rapport conformité NIS2/ISO27001
 ❌ Validation cluster sans Internet
@@ -306,43 +360,217 @@ oc get catalogsource -n openshift-marketplace
 
 ## Installation Grafana + Loki via ArgoCD (airgap)
 
-Une fois ICSP appliqué, on déploie via ArgoCD depuis Git :
+### Stratégie — OLM via OperatorHub airgap
+
+On utilise **OLM (Operator Lifecycle Manager)** plutôt que Helm direct, car :
+- Le catalog `operatorhubio/catalog:latest` est déjà mirrored dans Harbor
+- `grafana-operator` et `loki-operator` sont disponibles via `oc get packagemanifest`
+- C'est l'approche native OKD — cohérente avec Vault, Keycloak, ESO
 
 ```bash
-# manifests/grafana/00-subscription.yaml
-# manifests/loki/00-subscription.yaml
-# argocd/applications/grafana.yaml
-# argocd/applications/loki.yaml
+# Vérifier la disponibilité dans le catalog Harbor
+oc get packagemanifest | grep -iE "grafana|loki"
+# → grafana-operator   ✅
+# → loki-operator      ✅
+
+# Channels et CSVs disponibles
+oc get packagemanifest grafana-operator -o jsonpath='{.status.defaultChannel}' && echo
+# → v5
+oc get packagemanifest grafana-operator -o jsonpath='{.status.channels[0].currentCSV}' && echo
+# → grafana-operator.v5.22.2
+
+oc get packagemanifest loki-operator -o jsonpath='{.status.defaultChannel}' && echo
+# → alpha
+oc get packagemanifest loki-operator -o jsonpath='{.status.channels[0].currentCSV}' && echo
+# → loki-operator.v0.9.0
 ```
 
-ArgoCD sync depuis GitHub (via tinyproxy) → OLM pull depuis Harbor (ICSP) → pods déployés.
+### Manifests GitOps
+
+**Structure créée :**
+
+```
+manifests/
+├── grafana/
+│   ├── 00-namespace.yaml       ← exclu ArgoCD (namespaced mode)
+│   ├── 01-operatorgroup.yaml
+│   └── 02-subscription.yaml
+└── loki/
+    ├── 00-namespace.yaml       ← exclu ArgoCD (namespaced mode)
+    ├── 01-operatorgroup.yaml
+    └── 02-subscription.yaml
+
+argocd/applications/
+├── grafana.yaml
+└── loki.yaml
+```
+
+**manifests/grafana/01-operatorgroup.yaml :**
+
+```yaml
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: grafana-operator-group
+  namespace: grafana-operator
+spec:
+  targetNamespaces:
+    - grafana-operator
+```
+
+**manifests/grafana/02-subscription.yaml :**
+
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: grafana-operator
+  namespace: grafana-operator
+spec:
+  channel: v5
+  name: grafana-operator
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  startingCSV: grafana-operator.v5.22.2
+  installPlanApproval: Automatic
+```
+
+**manifests/loki/02-subscription.yaml :**
+
+```yaml
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: loki-operator
+  namespace: loki-operator
+spec:
+  channel: alpha
+  name: loki-operator
+  source: community-operators
+  sourceNamespace: openshift-marketplace
+  startingCSV: loki-operator.v0.9.0
+  installPlanApproval: Automatic
+```
+
+**argocd/applications/grafana.yaml :**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+    targetRevision: HEAD
+    path: manifests/grafana
+    directory:
+      exclude: '{*.sh,00-namespace.yaml}'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: grafana-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+```
+
+**argocd/applications/loki.yaml :**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+    targetRevision: HEAD
+    path: manifests/loki
+    directory:
+      exclude: '{*.sh,00-namespace.yaml}'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: loki-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+```
+
+### Prérequis namespaces (ArgoCD namespaced mode)
+
+ArgoCD Community Operator tourne en mode **namespaced** — il ne peut gérer que
+les namespaces explicitement labellisés. Les namespaces doivent être créés
+manuellement avant le déploiement :
+
+```bash
+# Créer les namespaces manuellement
+oc create namespace grafana-operator
+oc create namespace loki-operator
+
+# Autoriser ArgoCD à gérer ces namespaces
+oc label namespace grafana-operator argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace loki-operator argocd.argoproj.io/managed-by=openshift-operators
+```
+
+> ⚠️ **Pattern cohérent avec le projet** : tous les namespaces infrastructure
+> (keycloak, vault, grafana-operator, loki-operator) sont créés manuellement.
+> ArgoCD gère uniquement les ressources **dans** ces namespaces.
+
+### Déploiement via GitOps
+
+```bash
+# Commit + push → root-app détecte et déploie automatiquement
+git add manifests/grafana/ manifests/loki/ \
+        argocd/applications/grafana.yaml \
+        argocd/applications/loki.yaml
+git commit -m "feat: add Grafana Operator v5 and Loki Operator v0.9.0 via OLM airgap"
+git push
+
+# Surveiller
+watch oc get applications -n openshift-operators
+```
+
+### Résultat final
+
+```
+eso              Synced   Healthy  ✅
+grafana          Synced   Healthy  ✅
+keycloak         Synced   Healthy  ✅
+keycloak-secrets Synced   Healthy  ✅
+loki             Synced   Healthy  ✅
+root-app         Synced   Healthy  ✅
+vault            Synced   Healthy  ✅
+```
 
 ---
 
-## Validation airgap complète
+## Problèmes rencontrés et solutions
 
-```bash
-# 1. Cluster opérationnel sans Internet
-oc get nodes   # → Ready
-oc get co      # → tous Available
-
-# 2. OperatorHub depuis Harbor
-oc get catalogsource -n openshift-marketplace
-# → harbor.okd.lab comme source
-
-# 3. Grafana accessible
-oc get route -n grafana
-# → grafana.apps.sno.okd.lab
-
-# 4. Loki collecte les logs
-oc get pods -n loki
-# → Running
-
-# 5. Vault pod redémarre depuis Harbor
-oc delete pod vault-0 -n vault
-oc get pods -n vault
-# → image pullée depuis harbor.okd.lab via ICSP ✅
-```
+| Problème | Cause | Solution |
+|----------|-------|----------|
+| `x509: certificate signed by unknown authority` | CA Harbor non reconnue par oc-mirror | `sudo update-ca-certificates` avec ca.crt Harbor |
+| `BAD_REQUEST: invalid repository name` | Projet Harbor inexistant | Créer projet `okd-mirror` dans Harbor UI |
+| `channel does not exist: lokistack-1.0` | Mauvais channel loki-operator | Utiliser channel `alpha` |
+| `401 UNAUTHORIZED quay.io/grafana` | Version inexistante | Supprimer de additionalImages (inclus via bundle) |
+| `fatal: not a git repository` | Mauvais dossier courant | `cd ~/work/Openshift-OKD-SNO-Airgap-workstation` |
+| `cluster level Namespace cannot be managed (namespaced mode)` | ArgoCD mode namespaced — ne gère pas les ressources cluster-level | Exclure `00-namespace.yaml` + créer namespace manuellement |
+| `namespace "grafana-operator" is not managed` | Namespace non labellisé pour ArgoCD | `oc label namespace grafana-operator argocd.argoproj.io/managed-by=openshift-operators` |
 
 ---
 
@@ -367,24 +595,15 @@ Airgap total (Phase 4) :
 
 ---
 
-## Problèmes rencontrés et solutions
+## Prochaine étape — Phase 3 suite
 
-| Problème | Cause | Solution |
-|----------|-------|----------|
-| `x509: certificate signed by unknown authority` | CA Harbor non reconnue par oc-mirror | `sudo update-ca-certificates` avec ca.crt Harbor |
-| `BAD_REQUEST: invalid repository name` | Projet Harbor inexistant | Créer projet `okd-mirror` dans Harbor UI |
-| `channel does not exist: lokistack-1.0` | Mauvais channel loki-operator | Utiliser channel `alpha` |
-| `401 UNAUTHORIZED quay.io/grafana` | Version inexistante | Supprimer de additionalImages (inclus via bundle) |
-| `fatal: not a git repository` | Mauvais dossier courant | `cd ~/work/Openshift-OKD-SNO-Airgap-workstation` |
-
----
-
-## Prochaine étape — Phase 4
-
-→ GitLab in-cluster (airgap Git complet)
-→ GitLab CI/CD pipeline (build → Harbor → OKD)
-→ Cosign + Kyverno enforcement
-→ Airgap total validé
+```
+✅ Grafana Operator v5.22.2 — Synced/Healthy
+✅ Loki Operator v0.9.0     — Synced/Healthy
+❌ kube-bench               — rapport CIS Kubernetes Benchmark
+❌ Prowler                  — rapport conformité NIS2/ISO27001
+❌ Validation cluster sans Internet
+```
 
 ---
 
