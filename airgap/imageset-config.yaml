@@ -15,7 +15,11 @@ mirror:
             - name: alpha
         - name: external-secrets-operator
           channels:
+            - name: alpha
             - name: stable
+        - name: keycloak-operator
+          channels:
+            - name: fast
   additionalImages:
     - name: docker.io/hashicorp/vault:1.16.1
     - name: docker.io/grafana/loki:3.5.5
