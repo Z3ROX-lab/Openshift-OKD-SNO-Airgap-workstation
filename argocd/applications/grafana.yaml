@@ -1,0 +1,32 @@
+---
+# =============================================================================
+# grafana.yaml — ArgoCD Application : Grafana Operator
+# =============================================================================
+# Installe Grafana Operator v5 via OLM depuis catalog Harbor (airgap)
+# Channel : v5 | CSV : grafana-operator.v5.22.2
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+    targetRevision: HEAD
+    path: manifests/grafana
+    directory:
+      exclude: '{*.sh}'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: grafana-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
