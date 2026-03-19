@@ -16,3 +16,5 @@ mirror:
   additionalImages:
     - name: docker.io/hashicorp/vault:1.16.1
     - name: docker.io/grafana/loki:3.5.5
+    - name: docker.io/aquasec/kube-bench:latest
+    - name: docker.io/toniblyx/prowler:latest
