@@ -19,7 +19,7 @@ spec:
     targetRevision: HEAD
     path: manifests/loki
     directory:
-      exclude: '{*.sh}'
+      exclude: '{*.sh,00-namespace.yaml}'
   destination:
     server: https://kubernetes.default.svc
     namespace: loki-operator
