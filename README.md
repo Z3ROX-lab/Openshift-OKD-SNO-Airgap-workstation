@@ -7,6 +7,7 @@
 [![Vault](https://img.shields.io/badge/Secrets-HashiCorp%20Vault-black?logo=vault)](https://www.vaultproject.io/)
 [![Harbor](https://img.shields.io/badge/Registry-Harbor-blue?logo=harbor)](https://goharbor.io/)
 [![Keycloak](https://img.shields.io/badge/SSO-Keycloak-blue?logo=keycloak)](https://www.keycloak.org/)
+[![Kyverno](https://img.shields.io/badge/Policy-Kyverno-blue)](https://kyverno.io/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
@@ -17,22 +18,20 @@ This lab provisions a **fully airgap-capable Single Node OpenShift (SNO)** clust
 
 The project covers the full stack required for **enterprise Kubernetes/OpenShift missions** (on-premise, grands comptes, défense, telecom) :
 
-| Domain | Tools |
-|--------|-------|
-| Cluster provisioning | OKD 4.15, Agent-based Installer, FCOS |
-| Load Balancing | HAProxy (API + Ingress) |
-| Airgap | `oc-mirror`, mirror-registry, Harbor, ImageContentSourcePolicy |
-| Operator lifecycle | OperatorHub (airgap mode), CatalogSource, OLM |
-| Container registry | Harbor (images OCI + Helm OCI + Trivy CVE scan + Cosign signing) |
-| Identity & SSO | Keycloak 26.5.5, OAuth Server OKD → Keycloak OIDC |
-| GitOps | ArgoCD (OpenShift GitOps Operator), ApplicationSets |
-| Secrets management | HashiCorp Vault, Vault Agent Injector |
-| CI/CD | GitLab CI, Kaniko, GitLab Runners |
-| Container security | Trivy (Harbor), Grype, Syft, Checkov, Falco |
-| Image signing | Cosign + Kyverno policy enforcement |
-| Policy enforcement | Kyverno |
-| Storage | MinIO (S3-compatible CSI) |
-| Observability | Prometheus, Grafana, Loki |
+| Domain | Tools | Status |
+|--------|-------|--------|
+| Cluster provisioning | OKD 4.15, Agent-based Installer, FCOS | ✅ |
+| Container registry | Harbor 2.11 + MinIO S3 + Trivy + Cosign | ✅ |
+| Identity & SSO | Keycloak 26.5.5, OAuth OKD → Keycloak OIDC | ✅ |
+| GitOps | ArgoCD Community Operator v0.17 — App of Apps pattern | ✅ |
+| Secrets management | HashiCorp Vault + External Secrets Operator | ✅ |
+| Observability | Prometheus + Alertmanager + Thanos (built-in OKD) | ✅ |
+| Airgap | oc-mirror, Harbor, ImageContentSourcePolicy | 🔄 |
+| Observability stack | Grafana + Loki (airgap install) | 🔜 |
+| Compliance scanning | kube-bench (CIS) + Prowler (NIS2/ISO27001) | 🔜 |
+| Policy enforcement | Kyverno (VALIDATE + MUTATE + GENERATE + VERIFY) | 🔜 |
+| Runtime security | Falco | 🔜 |
+| Supply chain | Cosign + Kyverno VERIFY | 🔜 |
 
 ---
 
@@ -42,320 +41,400 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
   Browser / oc CLI
         │
         ▼
-┌───────────────────────────────────────────────────────────┐
-│                  Windows Host (GEEKOM A6)                  │
-│                                                           │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │                  Ubuntu WSL2                       │   │
-│  │                                                    │   │
-│  │  /etc/hosts       HAProxy         oc-mirror        │   │
-│  │  *.okd.lab   :6443 (API)     (pre-airgap mirror)   │   │
-│  │  → .10       :22623 (MCS)                          │   │
-│  │              :80/:443                              │   │
-│  └───────────────────┬────────────────────────────────┘   │
-│                      │ VMnet8 NAT (192.168.241.0/24)       │
-│  ┌───────────────────▼────────────────────────────────┐   │
-│  │           OKD SNO VM — 192.168.241.10              │   │
-│  │         FCOS │ vCPU: 8 │ RAM: 24G │ Disk: 120G    │   │
-│  │                                                    │   │
-│  │   ┌──────────────────────────────────────────┐    │   │
-│  │   │       OpenShift Ingress Controller        │    │   │
-│  │   └──┬───────┬───────┬───────┬───────┬────────┘   │   │
-│  │      ▼       ▼       ▼       ▼       ▼            │   │
-│  │   console  argocd  vault  keycloak  harbor        │   │
-│  │   .apps.*  .apps.* .apps.* .apps.*  .apps.*        │   │
-│  │                                                    │   │
-│  │  ┌─────────────────────────────────────────────┐  │   │
-│  │  │  Keycloak (IDP OIDC)                        │  │   │
-│  │  │  ├── Realm okd                              │  │   │
-│  │  │  ├── Client openshift (OKD SSO)             │  │   │
-│  │  │  ├── Client argocd                          │  │   │
-│  │  │  └── Client vault                           │  │   │
-│  │  └─────────────────────────────────────────────┘  │   │
-│  │                                                    │   │
-│  │  ┌─────────────────────────────────────────────┐  │   │
-│  │  │  Harbor VM — 192.168.241.20                 │  │   │
-│  │  │  ├── Images OCI (toutes les images cluster) │  │   │
-│  │  │  ├── Helm charts OCI (source ArgoCD)        │  │   │
-│  │  │  ├── Trivy → scan CVE auto à chaque push    │  │   │
-│  │  │  └── Cosign → signing + vérification        │  │   │
-│  │  └─────────────────────────────────────────────┘  │   │
-│  │                                                    │   │
-│  │  ┌──────────────┐  ┌────────────────────────────┐ │   │
-│  │  │   GitLab     │  │   ArgoCD                   │ │   │
-│  │  │  (source of  │◄─┤  Git source → GitLab ✅    │ │   │
-│  │  │   truth Git) │  │  Helm source → Harbor ✅   │ │   │
-│  │  └──────────────┘  └────────────────────────────┘ │   │
-│  │                                                    │   │
-│  │  ┌──────────┐ ┌─────────┐ ┌──────────────────┐    │   │
-│  │  │  Kyverno │ │  Falco  │ │   Prometheus      │    │   │
-│  │  │ (verify  │ │(runtime │ │   + Grafana       │    │   │
-│  │  │  Cosign) │ │security)│ │   + Loki          │    │   │
-│  │  └──────────┘ └─────────┘ └──────────────────┘    │   │
-│  └────────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────────┘
-```
-
-**Flux airgap (Phase 3+) :**
-1. `*.apps.sno.okd.lab` → `/etc/hosts` résout vers `192.168.241.10`
-2. VM sans accès Internet — VMnet1 Host-only
-3. ArgoCD → source Git depuis `gitlab.apps.sno.okd.lab`
-4. ArgoCD → Helm charts depuis `harbor.apps.sno.okd.lab` (OCI)
-5. Tout pull d'image → `harbor.apps.sno.okd.lab` (ICSP redirige docker.io, quay.io...)
-6. Chaque push Harbor → scan Trivy automatique + vérification Cosign via Kyverno
-
----
-
-## 📋 Prerequisites
-
-### Host (Windows + WSL2 Ubuntu)
-- VMware Workstation Pro 17+
-- RAM : 32 Go minimum (24 Go alloués à la VM SNO)
-- Disk : 120 Go disponibles sur D:\
-- `openshift-install` binary (OKD 4.15.0-0.okd-2024-03-10-010116)
-- `oc` CLI + `oc-mirror` plugin
-- HAProxy (load balancer — API + Ingress)
-
-### ⚠️ Notes spécifiques VMware Workstation + WSL2
-
-| Problème | Solution retenue |
-|----------|-----------------|
-| IP VM aléatoire à chaque boot | Réservation DHCP dans `C:\ProgramData\VMware\vmnetdhcp.conf` |
-| `nmstatectl` cassé dans WSL2 | Ne pas utiliser `networkConfig` dans `agent-config.yaml` |
-| DNS `*.okd.lab` non résolu | `/etc/hosts` (plus robuste que dnsmasq avec Tailscale) |
-| Bug socket PostgreSQL dans assisted-service-db | Script wrapper Podman avec `--tmpfs /var/run/postgresql` |
-| Certificats kubelet expirés après reboot | Script `scripts/okd-approve-csr.sh` |
-
-### DNS entries (`/etc/hosts` WSL2 + Windows)
-
-```
-192.168.241.10  api.sno.okd.lab api-int.sno.okd.lab
-192.168.241.10  console-openshift-console.apps.sno.okd.lab
-192.168.241.10  oauth-openshift.apps.sno.okd.lab
-192.168.241.10  keycloak.apps.sno.okd.lab
-192.168.241.10  harbor.apps.sno.okd.lab
-192.168.241.10  gitlab.apps.sno.okd.lab
-192.168.241.10  argocd.apps.sno.okd.lab
-192.168.241.10  vault.apps.sno.okd.lab
-192.168.241.20  harbor.okd.lab
+┌───────────────────────────────────────────────────────────────────┐
+│                    Windows Host (GEEKOM A6 — 32GB DDR5)           │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                      Ubuntu WSL2                            │  │
+│  │  /etc/hosts         tinyproxy :8888      oc-mirror          │  │
+│  │  *.okd.lab          (proxy ArgoCD        (airgap mirror)    │  │
+│  │  → .10              → github.com)                           │  │
+│  └──────────────────────────┬──────────────────────────────────┘  │
+│                             │ VMnet8 NAT (192.168.241.0/24)       │
+│  ┌──────────────────────────▼──────────────────────────────────┐  │
+│  │              OKD SNO VM — 192.168.241.10                    │  │
+│  │            FCOS │ 8vCPU │ 24GB RAM │ 120GB NVMe            │  │
+│  │                                                             │  │
+│  │  ┌─────────────────────────────────────────────────────┐   │  │
+│  │  │  NS: openshift-operators                            │   │  │
+│  │  │  ├── ArgoCD (App of Apps)                           │   │  │
+│  │  │  │   ├── root-app → keycloak, vault, eso            │   │  │
+│  │  │  │   └── tinyproxy HTTPS_PROXY → github.com         │   │  │
+│  │  │  └── ESO (External Secrets Operator)                │   │  │
+│  │  └─────────────────────────────────────────────────────┘   │  │
+│  │                                                             │  │
+│  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  │  │
+│  │  │ NS: keycloak  │  │  NS: vault    │  │ NS: external- │  │  │
+│  │  │               │  │               │  │    secrets    │  │  │
+│  │  │ Keycloak 26.5 │  │ Vault (dev)   │  │               │  │  │
+│  │  │ Realm: okd    │  │ KV v2         │  │ SecretStore   │  │  │
+│  │  │ Client:       │  │ K8s auth      │  │ ExternalSecret│  │  │
+│  │  │  openshift    │  │ Policies      │  │ → K8s Secrets │  │  │
+│  │  │  argocd       │  │ Route OKD     │  │               │  │  │
+│  │  │  vault        │  │               │  └───────────────┘  │  │
+│  │  └───────────────┘  └───────────────┘                     │  │
+│  │                                                             │  │
+│  │  ┌─────────────────────────────────────────────────────┐   │  │
+│  │  │  NS: openshift-monitoring (built-in OKD)            │   │  │
+│  │  │  ├── Prometheus     ✅                               │   │  │
+│  │  │  ├── Alertmanager   ✅                               │   │  │
+│  │  │  └── Thanos Querier ✅                               │   │  │
+│  │  └─────────────────────────────────────────────────────┘   │  │
+│  │                                                             │  │
+│  │  ┌─────────────────────────────────────────────────────┐   │  │
+│  │  │  Phase 3+ (airgap) :                                │   │  │
+│  │  │  ├── Grafana (depuis Harbor via ICSP)               │   │  │
+│  │  │  ├── Loki (depuis Harbor via ICSP)                  │   │  │
+│  │  │  ├── kube-bench (CIS scan)                          │   │  │
+│  │  │  ├── Prowler (compliance NIS2/ISO27001)              │   │  │
+│  │  │  ├── Kyverno (policy enforcement)                   │   │  │
+│  │  │  └── Falco (runtime security)                       │   │  │
+│  │  └─────────────────────────────────────────────────────┘   │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │              Harbor VM — 192.168.241.20                     │  │
+│  │           Ubuntu 24.04 │ 4vCPU │ 8GB │ 100GB              │  │
+│  │                                                             │  │
+│  │  Harbor 2.11.0 (:443)     MinIO (:9000 S3)                 │  │
+│  │  ├── Project: library     ├── Bucket: harbor-registry       │  │
+│  │  ├── Project: okd-mirror  └── Backend stockage images       │  │
+│  │  ├── Trivy ← scan CVE auto au push                         │  │
+│  │  └── Cosign ← signatures OCI                               │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 🚀 Phases du projet
 
-### Phase 1 — SNO Bootstrap ✅ COMPLETE
+### ✅ Phase 1 — SNO Bootstrap — COMPLETE
+
 > Provisionner le cluster OKD SNO via Agent-based Installer
 
-- [x] Génération `install-config.yaml` + `agent-config.yaml`
-- [x] Réservation DHCP VMware (`vmnetdhcp.conf`) — IP statique sans nmstate
-- [x] Configuration DNS via `/etc/hosts`
-- [x] Création de l'ISO avec `openshift-install agent create image`
-- [x] Création VM VMware Workstation (UEFI, vmxnet3, 8vCPU/24GB/120GB)
-- [x] Fix PostgreSQL container (assisted-service-db — socket `/var/run/postgresql`)
-- [x] Boot ISO + bootstrap cluster
-- [x] Validation cluster (`oc get nodes`, console web, 30/30 COs)
+- [x] `install-config.yaml` + `agent-config.yaml` générés
+- [x] Réservation DHCP VMware — IP statique `192.168.241.10`
+- [x] ISO créée avec `openshift-install agent create image`
+- [x] VM VMware (UEFI, 8vCPU/24GB/120GB NVMe)
+- [x] Fix PostgreSQL container (`--tmpfs /var/run/postgresql`)
+- [x] Bootstrap cluster + validation 30/30 Cluster Operators
+- [x] HAProxy (API :6443 + Ingress :80/:443)
 
-![Install Complete](docs/screenshots/phase1-install-complete.png)
-*`INFO Install complete!` — Cluster OKD SNO 4.15 FCOS opérationnel sur `192.168.241.10` ✅*
-
-→ [Guide d'installation complet](docs/phase1-bootstrap.md)
+→ [Guide d'installation](docs/phase1-bootstrap.md) | [Validation console](docs/phase1-validation-console.md)
 
 ---
 
-### Phase Harbor — Registry VM ✅ COMPLETE
+### ✅ Phase Harbor — Registry VM — COMPLETE
+
 > Harbor 2.11.0 sur VM dédiée avec MinIO S3 backend
 
-- [x] VM Ubuntu 24.04 (4vCPU / 8GB RAM / 100GB) — IP statique `192.168.241.20`
+- [x] VM Ubuntu 24.04 — IP statique `192.168.241.20`
 - [x] Docker 29.3.0 + Docker Compose v5.1.0
 - [x] MinIO standalone — bucket `harbor-registry`
-- [x] Certificats TLS auto-signés (CA Z3ROX Lab, SAN `harbor.okd.lab`)
+- [x] CA privée Z3ROX Lab + certificat TLS `harbor.okd.lab`
 - [x] Harbor 2.11.0 — 11/11 containers healthy
-- [x] Trivy scan CVE automatique (validé : 6 CVEs alpine:3.19)
-- [x] Cosign v2.2.4 — image signée et vérifiée ✅
+- [x] Trivy scan CVE automatique ✅
+- [x] Cosign v2.2.4 — signature + vérification ✅
 
-→ [Guide Harbor VM](docs/harbor-vm-installation-guide.md)
+→ [Guide Harbor VM](docs/harbor-vm.md)
 
 ---
 
-### Phase 2 — Identity, SSO & Secrets 🔄 IN PROGRESS
+### ✅ Phase 2a — Keycloak OIDC SSO — COMPLETE
 
-#### Phase 2a — Keycloak OIDC ✅ COMPLETE
 > SSO unifié OKD via Keycloak 26.5.5
 
-- [x] Keycloak Operator 26.5.5 installé via OperatorHub (channel fast, namespace keycloak)
-- [x] Instance Keycloak déployée avec wildcard cert `*.apps.sno.okd.lab`
-- [x] Realm `okd` créé
-- [x] Client OIDC `openshift` configuré (Standard flow, redirect URIs, client secret)
-- [x] OAuth CR OKD → Keycloak OIDC (fix CA x509 via ConfigMap `keycloak-ca`)
-- [x] Utilisateur `admin-okd` créé + droits `cluster-admin`
+- [x] Keycloak Operator v26.5.5 via OperatorHub (channel fast)
+- [x] Instance Keycloak avec wildcard cert `*.apps.sno.okd.lab`
+- [x] Realm `okd` — client `openshift` configuré
+- [x] OAuth CR OKD → Keycloak OIDC (fix CA x509 via ConfigMap)
+- [x] Utilisateur `admin-okd` + droits `cluster-admin`
 - [x] SSO validé — login console OKD via Keycloak ✅
 
-![OKD Login Keycloak](docs/screenshots/okd-login-keycloak-button.png)
-*Page login OKD — bouton "keycloak" aux côtés de "kube:admin"*
-
-![SSO Success](docs/screenshots/okd-console-keycloak-sso-success.png)
-*Console OKD — `admin-okd` connecté via SSO Keycloak ✅*
-
-→ [Guide Phase 2a — Keycloak OIDC](docs/phase2a-keycloak-oidc.md)
-
-#### Phase 2b — HashiCorp Vault 🔜
-- [ ] Déploiement Vault via OperatorHub
-- [ ] Vault Agent Injector + auth Kubernetes
-- [ ] Intégration secrets Keycloak + ArgoCD
-
-#### Phase 2c — CI/CD GitLab + Kaniko 🔜
-- [ ] GitLab Runner sur OKD (Kubernetes executor)
-- [ ] Pipeline Kaniko (build images sans Docker daemon)
-- [ ] Intégration Trivy + Grype + Syft dans la CI
-- [ ] ArgoCD sync depuis GitLab
+→ [Guide Phase 2a](docs/phase2a-keycloak-oidc.md)
 
 ---
 
-### Phase 3 — Airgap Simulation 🔜
-> Reproduire un environnement déconnecté grands comptes (défense, banque, télécom)
+### ✅ Phase 2b — ArgoCD + Vault + ESO — COMPLETE
 
-- [ ] `oc-mirror` : OKD + Harbor images + community-operator-index
-- [ ] mirror-registry WSL2 (Quay, bootstrap temporaire)
-- [ ] Désactivation CatalogSources + CatalogSource mirror
-- [ ] Coupure réseau VM (VMnet8 → VMnet1)
-- [ ] Migration images mirror-registry → Harbor
-- [ ] ICSP : redirection docker.io / quay.io → Harbor
-- [ ] Cosign signing + Kyverno policy enforce
-- [ ] ArgoCD airgap (Git → GitLab interne, Helm → Harbor OCI)
+> GitOps App of Apps + Secrets Management + External Secrets
 
-→ [Documentation Phase 3](docs/phase3-airgap.md)
+**ArgoCD — App of Apps pattern**
+- [x] ArgoCD Community Operator v0.17 via OperatorHub
+- [x] `root-app.yaml` — pattern App of Apps
+- [x] HTTPS_PROXY persistant dans la CR ArgoCD (tinyproxy → GitHub)
+- [x] Applications : keycloak, vault, eso, keycloak-secrets
+- [x] OLM Subscriptions tracées dans Git (00-subscription.yaml)
+- [x] Namespaces labellisés `argocd.argoproj.io/managed-by`
+
+**HashiCorp Vault**
+- [x] Helm chart v0.28.0 via ArgoCD Multiple Sources
+- [x] Route OKD `vault.apps.sno.okd.lab`
+- [x] Kubernetes auth + CA cert + policies + roles
+- [x] KV v2 : `secret/keycloak/*` + `secret/argocd/*`
+- [x] `scripts/vault-bootstrap.sh` — reproductible après reboot
+- [x] ClusterRoleBinding `vault-server-binding` (TokenReview)
+
+**External Secrets Operator**
+- [x] ESO via OLM Subscription GitOps (community-operators)
+- [x] OperatorConfig `cluster` → pods ESO Running
+- [x] SecretStore `vault-backend` → Valid ✅
+- [x] ExternalSecret `keycloak-secrets` → SecretSynced ✅
+- [x] K8s Secret `keycloak-vault-secrets` créé automatiquement
+
+**Monitoring built-in OKD**
+- [x] Prometheus + Alertmanager + Thanos — Running ✅
+- [x] Queries validées : up, CPU, RAM, pods, cluster ratio
+- [x] Dashboards API Performance + etcd validés
+
+→ [Guide Phase 2b](docs/phase2b-argocd-vault.md) | [Monitoring validation](docs/phase2b-monitoring-validation.md)
 
 ---
 
-### Phase 4 — Security & Scanning 🔜
-> Kyverno, Falco, supply chain security
+### 🔄 Phase 3 — Airgap — IN PROGRESS
 
-- [ ] Kyverno policies enforce + vérification signatures Cosign
+> Simulation environnement déconnecté grands comptes
+
+- [x] oc-mirror v4.15 installé + CA Harbor ajoutée au store WSL2
+- [x] `airgap/imageset-config.yaml` créé et commité
+- [x] Projet `okd-mirror` créé dans Harbor
+- [x] Dry-run validé — 1.543 GiB à mirror
+- [x] Mirror réel lancé — Grafana + Loki + Vault + kube-bench + Prowler
+- [ ] ICSP + CatalogSource appliqués sur OKD
+- [ ] Grafana installé depuis Harbor (airgap)
+- [ ] Loki installé depuis Harbor (airgap)
+- [ ] kube-bench — rapport CIS Kubernetes Benchmark
+- [ ] Prowler — rapport conformité NIS2/ISO27001
+- [ ] Validation cluster sans Internet
+
+→ [Guide Phase 3](docs/phase3-airgap.md)
+
+---
+
+### 🔜 Phase 4 — Security & Compliance
+
+> Kyverno, Falco, Supply Chain, Conformité
+
+- [ ] Kyverno — VALIDATE + MUTATE + GENERATE + VERIFY Cosign
+- [ ] NetworkPolicy default-deny auto sur chaque namespace
 - [ ] Falco runtime security rules
-- [ ] Checkov dans les pipelines GitLab
-- [ ] SBOM generation avec Syft
+- [ ] Cosign signing pipeline + enforcement Kyverno
+- [ ] Comparaison avant/après kube-bench (Phase 3 → Phase 4)
 
 → [Documentation Phase 4](docs/phase4-security.md)
 
 ---
 
-### Phase 5 — Portfolio & Demo 🔜
-> Documentation, screenshots, vidéo démo
-
-- [ ] Architecture diagrams
-- [ ] Demo script
-- [ ] Vidéo walkthrough
-
-→ [Documentation Phase 5](docs/phase5-demo.md)
-
----
-
-## 📁 Repository Structure
+## 📁 Structure du repository
 
 ```
 .
-├── install/
-│   ├── install-config.yaml             # Config cluster
-│   └── agent-config.yaml               # Interface ens160, MAC statique
-├── scripts/
-│   ├── fix-assisted-db.sh              # Fix bug PostgreSQL socket OKD 4.15
-│   └── okd-approve-csr.sh             # Approbation CSR kubelet après reboot
-├── manifests/
-│   └── keycloak/
-│       ├── 01-tls-secret.sh            # Copie wildcard cert + CA configmap
-│       ├── 02-keycloak-instance.yaml   # CR Keycloak instance
-│       ├── 03-client-secret.yaml       # Placeholder secret client
-│       └── 04-oauth-cluster.yaml       # OAuth CR OKD → Keycloak OIDC
-├── haproxy/
-│   ├── haproxy.cfg
-│   └── haproxy-setup.md
 ├── airgap/
-│   └── imagesets/
-│       └── okd-4.15-imageset.yaml
-├── harbor/
-│   └── cosign-policy.yaml
-├── gitops/
+│   └── imageset-config.yaml          # oc-mirror ImageSetConfiguration
+├── argocd/
+│   └── applications/                 # ArgoCD Applications (App of Apps)
+│       ├── keycloak.yaml
+│       ├── keycloak-secrets.yaml
+│       ├── vault.yaml
+│       └── eso.yaml
+├── manifests/
 │   ├── argocd/
-│   └── applications/
-├── vault/
-├── ci-cd/
-│   ├── gitlab/
-│   ├── kaniko/
-│   └── scanners/
-├── security/
-│   ├── kyverno/
-│   └── falco/
-└── docs/
-    ├── phase1-bootstrap.md             ✅
-    ├── harbor-vm-installation-guide.md ✅
-    ├── phase2a-keycloak-oidc.md        ✅
-    ├── phase3-airgap.md
-    ├── phase4-security.md
-    ├── phase5-demo.md
-    └── screenshots/
+│   │   ├── 00-subscription.yaml      # OLM Subscription ArgoCD
+│   │   ├── 01-argocd-instance.yaml
+│   │   └── root-app.yaml             # Bootstrap App of Apps
+│   ├── keycloak/
+│   │   ├── 00-namespace.yaml
+│   │   ├── 00-subscription.yaml      # OLM Subscription Keycloak
+│   │   ├── 01-tls-secret.sh
+│   │   ├── 02-keycloak-instance.yaml
+│   │   ├── 03-client-secret.yaml
+│   │   └── 04-oauth-cluster.yaml     # Manuel (cluster-level)
+│   ├── vault/
+│   │   ├── 00-namespace.yaml
+│   │   ├── values.yaml               # Helm values Vault
+│   │   └── extras/
+│   │       ├── 01-route.yaml         # Route OKD Vault
+│   │       └── 02-auth-delegator.yaml # Manuel (cluster-level)
+│   └── eso/
+│       ├── 00-namespace.yaml
+│       ├── 00-subscription.yaml      # OLM Subscription ESO
+│       ├── 01-operatorconfig.yaml
+│       ├── 01-secret-store.yaml
+│       └── 02-external-secret.yaml
+├── scripts/
+│   ├── fix-assisted-db.sh            # Fix PostgreSQL socket OKD 4.15
+│   ├── okd-approve-csr.sh            # Approbation CSR kubelet
+│   └── vault-bootstrap.sh            # Bootstrap Vault après reboot
+├── docs/
+│   ├── adr/
+│   │   ├── adr-001-okd-vs-openshift.md
+│   │   ├── adr-002-fcos-machineconfig.md
+│   │   ├── adr-003-kyverno.md
+│   │   └── adr-004-security-strategy.md
+│   ├── phase1-bootstrap.md
+│   ├── phase1-validation-console.md
+│   ├── harbor-vm.md
+│   ├── phase2a-keycloak-oidc.md
+│   ├── phase2b-argocd-vault.md
+│   ├── phase2b-monitoring-validation.md
+│   ├── phase3-airgap.md
+│   └── screenshots/
+└── haproxy/
+    └── haproxy.cfg
+```
+
+---
+
+## ⚙️ GitOps — Bootstrap from scratch
+
+```bash
+# 1. Installer ArgoCD via OLM
+oc apply -f manifests/argocd/00-subscription.yaml
+# Attendre que l'opérateur soit Running (~2 min)
+
+# 2. Démarrer le pattern App of Apps
+oc apply -f manifests/argocd/root-app.yaml
+# ArgoCD déploie automatiquement keycloak, vault, eso
+
+# 3. Labelliser les namespaces
+oc label namespace vault argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace keycloak argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace external-secrets argocd.argoproj.io/managed-by=openshift-operators
+
+# 4. Appliquer les ressources cluster-level (une seule fois)
+oc apply -f manifests/keycloak/04-oauth-cluster.yaml
+oc apply -f manifests/vault/extras/02-auth-delegator.yaml
+
+# 5. Bootstrap Vault
+source .env && ./scripts/vault-bootstrap.sh
+
+# 6. TLS Keycloak (après chaque reboot)
+./manifests/keycloak/01-tls-secret.sh
 ```
 
 ---
 
 ## ⚠️ Post-reboot checklist
 
-Après chaque redémarrage de la VM OKD SNO :
-
 ```bash
 export KUBECONFIG=~/work/okd-sno-install/auth/kubeconfig
 
-# 1. Approuver les CSR kubelet expirés
+# 1. Approuver les CSR kubelet
 ./scripts/okd-approve-csr.sh
 
 # 2. Vérifier le cluster
 oc get nodes
 oc get co | grep -v "True.*False.*False"
 
-# 3. Recréer le secret TLS Keycloak si nécessaire
+# 3. Bootstrap Vault (mode dev — données perdues au reboot)
+source .env && ./scripts/vault-bootstrap.sh
+
+# 4. TLS Keycloak si nécessaire
 ./manifests/keycloak/01-tls-secret.sh
 ```
 
 ---
 
-## 🔧 Key Lessons Learned
+## 🔐 Accès aux UIs
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Console OKD | https://console-openshift-console.apps.sno.okd.lab | admin-okd / Keycloak |
+| ArgoCD | https://argocd-server-openshift-operators.apps.sno.okd.lab | admin |
+| Vault | https://vault.apps.sno.okd.lab | Token: root |
+| Keycloak | https://keycloak.apps.sno.okd.lab | admin |
+| Harbor | https://harbor.okd.lab | admin / Harbor12345! |
+| Prometheus | Console OKD → Observe → Metrics | - |
+| Alertmanager | Console OKD → Observe → Alerting | - |
+
+---
+
+## 📐 Architecture Decision Records
+
+| ADR | Titre | Statut |
+|-----|-------|--------|
+| [ADR-001](docs/adr/adr-001-okd-vs-openshift.md) | OKD vs Red Hat OpenShift | Accepted |
+| [ADR-002](docs/adr/adr-002-fcos-machineconfig.md) | FCOS Immutable OS + MachineConfig | Accepted |
+| [ADR-003](docs/adr/adr-003-kyverno.md) | Kyverno Policy Engine | Accepted |
+| [ADR-004](docs/adr/adr-004-security-strategy.md) | Stratégie sécurité multi-couches | Accepted |
+
+---
+
+## 🔧 Problèmes connus et solutions
 
 | Problème | Cause | Solution |
 |----------|-------|----------|
 | `AttributeError: 'NoneType' ...SettingBond` | nmstatectl absent dans WSL2 | Supprimer `networkConfig` de agent-config.yaml |
-| Interface `ens33` introuvable | vmxnet3 génère `ens160` | Utiliser `ens160` |
 | IP VM aléatoire | Pas de réservation DHCP VMware | Ajouter entrée dans `vmnetdhcp.conf` |
 | `assisted-service-db` crash | Bug socket `/var/run/postgresql` | `--tmpfs /var/run/postgresql:rw,mode=0777` |
-| dnsmasq conflits Tailscale | Port 53 partagé | `/etc/hosts` |
-| OKD 4.17 SCOS bloqué sur VMware | `release-image-pivot` ne peut pas remount `/sysroot` | **Utiliser OKD 4.15 FCOS** |
+| OKD 4.17 SCOS bloqué sur VMware | `release-image-pivot` remount `/sysroot` | **Utiliser OKD 4.15 FCOS** |
 | Certificats kubelet expirés après reboot | Cluster éteint > 24h | `scripts/okd-approve-csr.sh` |
-| Router pod Pending après reboot | Certificats kubelet expirés → hostPort bloqué | Approuver CSRs + restart kubelet |
-| OAuth CO Degraded : x509 unknown authority | Keycloak self-signed cert non reconnu | ConfigMap `keycloak-ca` dans `openshift-config` |
+| OAuth CO Degraded : x509 unknown authority | Keycloak self-signed cert | ConfigMap `keycloak-ca` dans `openshift-config` |
+| ArgoCD perd HTTPS_PROXY | Opérateur reconcilie le Deployment | Configurer dans la CR ArgoCD `spec.repo.env` |
+| ESO `OperatorConfig` erreur spec | `spec: {}` requis | Ajouter `spec: {}` explicitement |
+| Vault 403 Kubernetes auth | `authDelegator` désactivé + CA cert manquant | ClusterRoleBinding + CA cert dans bootstrap script |
+| oc-mirror `401 UNAUTHORIZED` | Image inexistante dans additionalImages | Utiliser versions détectées automatiquement par bundle |
 
 ---
 
-## 🎓 Skills Demonstrated
+## 🎓 Compétences démontrées
 
-- ✅ OpenShift UPI deployment (`platform: none`, Agent-based Installer)
-- ✅ FCOS (Fedora CoreOS) bare-metal provisioning via Ignition
-- ✅ Airgap cluster operations (`oc-mirror`, disconnected OperatorHub, ICSP)
-- ✅ Harbor 2.11.0 : registry OCI + MinIO S3 backend + Trivy CVE scan + Cosign signing
-- ✅ Supply chain security (Cosign + Kyverno enforce)
-- ✅ SSO with Keycloak 26.5.5 — OAuth Server OKD → Keycloak OIDC (realm okd, x509 CA fix)
-- ✅ GitOps airgap : ArgoCD + GitLab interne + Harbor OCI Helm
-- ✅ Secrets management with HashiCorp Vault
-- ✅ Container image build with Kaniko (daemonless)
-- ✅ Runtime security with Falco
-- ✅ Policy enforcement with Kyverno
-- ✅ CSI storage with MinIO
+```
+Infrastructure & OS
+├── OKD UPI deployment (platform: none, Agent-based Installer) ✅
+├── FCOS bare-metal provisioning via Ignition ✅
+└── MachineConfig — configuration OS déclarative ✅
+
+GitOps
+├── ArgoCD App of Apps pattern ✅
+├── OLM Subscriptions as Code ✅
+├── ArgoCD Multiple Sources (Helm + Git) ✅
+└── Namespace management (labels, managed-by) ✅
+
+Secrets Management
+├── HashiCorp Vault Kubernetes auth ✅
+├── External Secrets Operator ✅
+├── SecretStore + ExternalSecret GitOps ✅
+└── vault-bootstrap.sh reproductible ✅
+
+Identity & SSO
+├── Keycloak OIDC — OAuth Server OKD ✅
+├── Realm + clients + users + RBAC ✅
+└── x509 CA fix pour self-signed certs ✅
+
+Container Registry & Supply Chain
+├── Harbor 2.11 + MinIO S3 backend ✅
+├── Trivy CVE scan automatique ✅
+├── Cosign image signing ✅
+└── oc-mirror airgap mirroring 🔄
+
+Observabilité
+├── Prometheus + Alertmanager + Thanos (built-in) ✅
+├── PromQL queries cluster health ✅
+├── Grafana + Loki (airgap install) 🔜
+└── kube-bench + Prowler compliance 🔜
+
+Sécurité
+├── Défense en profondeur 6 couches (ADR-004) ✅
+├── SCCs OpenShift ✅
+├── Kyverno policy engine 🔜
+└── Falco runtime security 🔜
+
+Airgap
+├── oc-mirror ImageSetConfiguration ✅
+├── Harbor okd-mirror project ✅
+├── ICSP + CatalogSource 🔜
+└── Validation cluster sans Internet 🔜
+```
 
 ---
 
-## 👤 Author
+## 👤 Auteur
 
-**Z3ROX** — Lead SecOps / Cloud Security Architect  
-CCSP | AWS Solutions Architect | ISO 27001 Lead Implementer  
-[GitHub](https://github.com/Z3ROX-lab) | [LinkedIn](#)
+**Z3ROX (Stéphane Seloi)** — Cloud Native Security Architect  
+CCSP | AWS Solutions Architect | ISO 27001 Lead Implementer | CompTIA Security+  
+[GitHub](https://github.com/Z3ROX-lab)
 
 ---
 
