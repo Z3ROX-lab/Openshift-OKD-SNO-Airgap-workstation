@@ -30,7 +30,7 @@ spec:
     targetRevision: HEAD
     path: manifests/keycloak
     directory:
-      exclude: '{*.sh,04-oauth-cluster.yaml,00-namespace.yaml}'
+      exclude: '{*.sh,03-client-secret.yaml,04-oauth-cluster.yaml,00-namespace.yaml}'
   destination:
     server: https://kubernetes.default.svc
     namespace: keycloak
