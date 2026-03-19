@@ -3,6 +3,4 @@ kind: OperatorGroup
 metadata:
   name: loki-operator-group
   namespace: loki-operator
-spec:
-  targetNamespaces:
-    - loki-operator
+spec: {}
