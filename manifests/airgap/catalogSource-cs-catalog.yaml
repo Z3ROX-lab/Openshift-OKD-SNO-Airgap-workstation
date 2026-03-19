@@ -1,0 +1,8 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: cs-catalog
+  namespace: openshift-marketplace
+spec:
+  image: harbor.okd.lab/okd-mirror/operatorhubio/catalog:latest
+  sourceType: grpc

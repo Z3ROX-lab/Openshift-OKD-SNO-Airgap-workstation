@@ -1,0 +1,13 @@
+---
+apiVersion: operator.openshift.io/v1alpha1
+kind: ImageContentSourcePolicy
+metadata:
+  name: generic-0
+spec:
+  repositoryDigestMirrors:
+  - mirrors:
+    - harbor.okd.lab/okd-mirror/aquasec
+    source: docker.io/aquasec
+  - mirrors:
+    - harbor.okd.lab/okd-mirror/toniblyx
+    source: docker.io/toniblyx
