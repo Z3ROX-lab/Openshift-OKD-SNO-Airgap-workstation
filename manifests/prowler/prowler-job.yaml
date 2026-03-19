@@ -1,0 +1,32 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: prowler
+  namespace: prowler
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: prowler
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+      hostAliases:
+        - ip: "192.168.241.20"
+          hostnames:
+            - "harbor.okd.lab"
+      containers:
+        - name: prowler
+          image: harbor.okd.lab/okd-mirror/toniblyx/prowler:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              poetry run prowler kubernetes \
+                --no-banner \
+                --output-formats html \
+                --compliance cis_1.10_kubernetes 2>&1
+              echo "EXIT: $?"
+              sleep 120
+      restartPolicy: Never
