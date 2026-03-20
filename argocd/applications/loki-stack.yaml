@@ -1,0 +1,32 @@
+---
+# =============================================================================
+# loki-stack.yaml — ArgoCD Application : LokiStack instance
+# =============================================================================
+# LokiStack avec MinIO backend S3 (192.168.241.20:9000)
+# Credentials via ESO → Vault (secret/loki)
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki-stack
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+    targetRevision: HEAD
+    path: manifests/loki-stack
+    directory:
+      exclude: '{*.sh}'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: loki-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

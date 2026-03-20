@@ -1,0 +1,21 @@
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: lokistack
+  namespace: loki-operator
+spec:
+  size: 1x.extra-small
+  storage:
+    schemas:
+      - version: v13
+        effectiveDate: "2024-01-01"
+    secret:
+      name: loki-s3-secret
+      type: s3
+    s3:
+      endpoint: http://192.168.241.20:9000
+      region: us-east-1
+      bucketnames: loki-logs
+  storageClassName: ""
+  tenants:
+    mode: openshift-logging
