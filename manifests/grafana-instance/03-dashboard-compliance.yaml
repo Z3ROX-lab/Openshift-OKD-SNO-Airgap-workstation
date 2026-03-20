@@ -1,0 +1,158 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: compliance-security
+  namespace: grafana-operator
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  json: |
+    {
+      "title": "OKD SNO — Security Compliance",
+      "uid": "compliance-security",
+      "tags": ["security", "compliance", "cis"],
+      "refresh": "5m",
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "kube-bench CIS 1.8 — PASS",
+          "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+          "options": {"colorMode": "background"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"fixedColor": "green", "mode": "fixed"},
+              "unit": "short"
+            }
+          },
+          "targets": [{
+            "datasource": "-- Dashboard --",
+            "refId": "A"
+          }],
+          "transformations": [],
+          "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+          "options": {
+            "reduceOptions": {"calcs": ["lastNotNull"]},
+            "colorMode": "background",
+            "graphMode": "none",
+            "textMode": "value_and_name"
+          },
+          "pluginVersion": "12.4.1",
+          "fieldConfig": {
+            "defaults": {
+              "color": {"fixedColor": "green", "mode": "fixed"},
+              "mappings": [{"options": {"result": {"text": "36"}}, "type": "special"}]
+            }
+          }
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "kube-bench CIS 1.8 — FAIL",
+          "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"fixedColor": "red", "mode": "fixed"},
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "kube-bench CIS 1.8 — WARN",
+          "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"fixedColor": "orange", "mode": "fixed"},
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": 4,
+          "type": "gauge",
+          "title": "Prowler CIS 1.10 — Score",
+          "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+          "fieldConfig": {
+            "defaults": {
+              "min": 0, "max": 100,
+              "unit": "percent",
+              "thresholds": {
+                "steps": [
+                  {"color": "red", "value": 0},
+                  {"color": "orange", "value": 70},
+                  {"color": "green", "value": 90}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Cluster CPU Usage",
+          "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+          "targets": [{
+            "datasource": {"type": "prometheus"},
+            "expr": "sum(rate(container_cpu_usage_seconds_total{namespace!=''}[5m])) by (namespace)",
+            "legendFormat": "{{namespace}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Cluster Memory Usage",
+          "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+          "targets": [{
+            "datasource": {"type": "prometheus"},
+            "expr": "sum(container_memory_working_set_bytes{namespace!=''}) by (namespace)",
+            "legendFormat": "{{namespace}}",
+            "refId": "A"
+          }]
+        },
+        {
+          "id": 7,
+          "type": "table",
+          "title": "kube-bench — Failures par section",
+          "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+          "fieldConfig": {
+            "defaults": {"unit": "short"}
+          },
+          "options": {
+            "footer": {"show": false},
+            "showHeader": true
+          },
+          "transformations": [{"id": "organize"}]
+        },
+        {
+          "id": 8,
+          "type": "piechart",
+          "title": "Prowler — Résultats par service",
+          "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+          "fieldConfig": {
+            "defaults": {"unit": "short"}
+          },
+          "options": {
+            "pieType": "pie",
+            "legend": {"displayMode": "table", "placement": "right"}
+          }
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "Pod Restarts — Tous namespaces",
+          "gridPos": {"x": 0, "y": 20, "w": 24, "h": 8},
+          "targets": [{
+            "datasource": {"type": "prometheus"},
+            "expr": "increase(kube_pod_container_status_restarts_total[1h]) > 0",
+            "legendFormat": "{{namespace}}/{{pod}}",
+            "refId": "A"
+          }]
+        }
+      ],
+      "time": {"from": "now-3h", "to": "now"},
+      "schemaVersion": 38
+    }
