@@ -25,13 +25,17 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 | Identity & SSO | Keycloak 26.5.5, OAuth OKD → Keycloak OIDC | ✅ |
 | GitOps | ArgoCD Community Operator v0.17 — App of Apps pattern | ✅ |
 | Secrets management | HashiCorp Vault + External Secrets Operator | ✅ |
-| Observability | Prometheus + Alertmanager + Thanos (built-in OKD) | ✅ |
-| Airgap | oc-mirror, Harbor, ImageContentSourcePolicy | 🔄 |
-| Observability stack | Grafana + Loki (airgap install) | 🔜 |
-| Compliance scanning | kube-bench (CIS) + Prowler (NIS2/ISO27001) | 🔜 |
+| Observability built-in | Prometheus + Alertmanager + Thanos (OKD) | ✅ |
+| Airgap | oc-mirror, Harbor, ICSP, CatalogSource Harbor | ✅ |
+| Operators via OLM airgap | Grafana Operator v5 + Loki Operator v0.9 | ✅ |
+| StorageClass | local-path-provisioner (Rancher) | ✅ |
+| Observability stack | Grafana instance + Prometheus datasource + dashboard | ✅ |
+| Compliance scanning | kube-bench CIS 1.8 + Prowler CIS 1.10 | ✅ |
 | Policy enforcement | Kyverno (VALIDATE + MUTATE + GENERATE + VERIFY) | 🔜 |
 | Runtime security | Falco | 🔜 |
 | Supply chain | Cosign + Kyverno VERIFY | 🔜 |
+| GitOps airgap total | GitLab in-cluster + CI/CD pipeline | 🔜 |
+| Multi-cluster | HyperShift + Azure NodePools | 🔜 |
 
 ---
 
@@ -59,20 +63,19 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 │  │  │  NS: openshift-operators                            │   │  │
 │  │  │  ├── ArgoCD (App of Apps)                           │   │  │
 │  │  │  │   ├── root-app → keycloak, vault, eso            │   │  │
+│  │  │  │   ├── grafana, loki, grafana-instance            │   │  │
 │  │  │  │   └── tinyproxy HTTPS_PROXY → github.com         │   │  │
 │  │  │  └── ESO (External Secrets Operator)                │   │  │
 │  │  └─────────────────────────────────────────────────────┘   │  │
 │  │                                                             │  │
 │  │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  │  │
-│  │  │ NS: keycloak  │  │  NS: vault    │  │ NS: external- │  │  │
-│  │  │               │  │               │  │    secrets    │  │  │
+│  │  │ NS: keycloak  │  │  NS: vault    │  │ NS: grafana-  │  │  │
+│  │  │               │  │               │  │    operator   │  │  │
 │  │  │ Keycloak 26.5 │  │ Vault (dev)   │  │               │  │  │
-│  │  │ Realm: okd    │  │ KV v2         │  │ SecretStore   │  │  │
-│  │  │ Client:       │  │ K8s auth      │  │ ExternalSecret│  │  │
-│  │  │  openshift    │  │ Policies      │  │ → K8s Secrets │  │  │
-│  │  │  argocd       │  │ Route OKD     │  │               │  │  │
-│  │  │  vault        │  │               │  └───────────────┘  │  │
-│  │  └───────────────┘  └───────────────┘                     │  │
+│  │  │ Realm: okd    │  │ KV v2         │  │ Grafana v12   │  │  │
+│  │  │ OIDC → OKD    │  │ K8s auth      │  │ Datasource:   │  │  │
+│  │  │               │  │ Policies/Roles│  │ Prometheus OKD│  │  │
+│  │  └───────────────┘  └───────────────┘  └───────────────┘  │  │
 │  │                                                             │  │
 │  │  ┌─────────────────────────────────────────────────────┐   │  │
 │  │  │  NS: openshift-monitoring (built-in OKD)            │   │  │
@@ -82,13 +85,16 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 │  │  └─────────────────────────────────────────────────────┘   │  │
 │  │                                                             │  │
 │  │  ┌─────────────────────────────────────────────────────┐   │  │
-│  │  │  Phase 3+ (airgap) :                                │   │  │
-│  │  │  ├── Grafana (depuis Harbor via ICSP)               │   │  │
-│  │  │  ├── Loki (depuis Harbor via ICSP)                  │   │  │
-│  │  │  ├── kube-bench (CIS scan)                          │   │  │
-│  │  │  ├── Prowler (compliance NIS2/ISO27001)              │   │  │
+│  │  │  NS: kube-bench / prowler (Jobs ponctuels)          │   │  │
+│  │  │  ├── kube-bench CIS 1.8 → 36P/36F/58W ✅            │   │  │
+│  │  │  └── Prowler CIS 1.10 → 91.56% PASS ✅              │   │  │
+│  │  └─────────────────────────────────────────────────────┘   │  │
+│  │                                                             │  │
+│  │  ┌─────────────────────────────────────────────────────┐   │  │
+│  │  │  Phase 4+ :                                         │   │  │
 │  │  │  ├── Kyverno (policy enforcement)                   │   │  │
-│  │  │  └── Falco (runtime security)                       │   │  │
+│  │  │  ├── Falco (runtime security)                       │   │  │
+│  │  │  └── GitLab in-cluster (airgap Git total)           │   │  │
 │  │  └─────────────────────────────────────────────────────┘   │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                                                                   │
@@ -98,7 +104,7 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 │  │                                                             │  │
 │  │  Harbor 2.11.0 (:443)     MinIO (:9000 S3)                 │  │
 │  │  ├── Project: library     ├── Bucket: harbor-registry       │  │
-│  │  ├── Project: okd-mirror  └── Backend stockage images       │  │
+│  │  ├── Project: okd-mirror  └── Bucket: loki-logs (réservé)  │  │
 │  │  ├── Trivy ← scan CVE auto au push                         │  │
 │  │  └── Cosign ← signatures OCI                               │  │
 │  └─────────────────────────────────────────────────────────────┘  │
@@ -172,41 +178,68 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 - [x] Helm chart v0.28.0 via ArgoCD Multiple Sources
 - [x] Route OKD `vault.apps.sno.okd.lab`
 - [x] Kubernetes auth + CA cert + policies + roles
-- [x] KV v2 : `secret/keycloak/*` + `secret/argocd/*`
+- [x] KV v2 : `secret/keycloak` + `secret/vault` + `secret/loki` + `secret/grafana`
 - [x] `scripts/vault-bootstrap.sh` — reproductible après reboot
 - [x] ClusterRoleBinding `vault-server-binding` (TokenReview)
 
 **External Secrets Operator**
 - [x] ESO via OLM Subscription GitOps (community-operators)
 - [x] OperatorConfig `cluster` → pods ESO Running
-- [x] SecretStore `vault-backend` → Valid ✅
-- [x] ExternalSecret `keycloak-secrets` → SecretSynced ✅
-- [x] K8s Secret `keycloak-vault-secrets` créé automatiquement
+- [x] SecretStore `vault-backend` → Valid ✅ (keycloak, loki-operator, grafana-operator)
+- [x] ExternalSecrets → SecretSynced ✅
 
 **Monitoring built-in OKD**
 - [x] Prometheus + Alertmanager + Thanos — Running ✅
 - [x] Queries validées : up, CPU, RAM, pods, cluster ratio
-- [x] Dashboards API Performance + etcd validés
 
 → [Guide Phase 2b](docs/phase2b-argocd-vault.md) | [Monitoring validation](docs/phase2b-monitoring-validation.md)
 
 ---
 
-### 🔄 Phase 3 — Airgap — IN PROGRESS
+### ✅ Phase 3 — Airgap — COMPLETE
 
 > Simulation environnement déconnecté grands comptes
 
-- [x] oc-mirror v4.15 installé + CA Harbor ajoutée au store WSL2
-- [x] `airgap/imageset-config.yaml` créé et commité
-- [x] Projet `okd-mirror` créé dans Harbor
-- [x] Dry-run validé — 1.543 GiB à mirror
-- [x] Mirror réel lancé — Grafana + Loki + Vault + kube-bench + Prowler
-- [ ] ICSP + CatalogSource appliqués sur OKD
-- [ ] Grafana installé depuis Harbor (airgap)
-- [ ] Loki installé depuis Harbor (airgap)
-- [ ] kube-bench — rapport CIS Kubernetes Benchmark
-- [ ] Prowler — rapport conformité NIS2/ISO27001
-- [ ] Validation cluster sans Internet
+**Airgap progressif** — pattern enterprise réaliste :
+le cluster ne voit jamais Internet, Harbor est le seul point d'entrée des images.
+Le bastion WSL2 peut pousser des images dans Harbor au fur et à mesure.
+
+**oc-mirror + Harbor**
+- [x] oc-mirror v4.15 — mirror 4.62 GiB (Grafana + Loki + Vault + kube-bench + Prowler)
+- [x] ICSP `generic-0` appliqué — MachineConfigPool UPDATED=True ✅
+- [x] CatalogSource `community-operators` → `harbor.okd.lab/okd-mirror/operatorhubio/catalog:latest`
+
+**OLM Operators via Harbor (airgap)**
+- [x] Grafana Operator v5.22.2 — channel v5 — Synced/Healthy ✅
+- [x] Loki Operator v0.9.0 — channel alpha — Synced/Healthy ✅
+- [x] Fix OperatorGroup AllNamespaces mode pour Loki Operator
+
+**StorageClass**
+- [x] `local-path-provisioner` v0.0.26 (Rancher) depuis Harbor
+- [x] StorageClass `local-path` — default ✅
+
+**Compliance scanning depuis Harbor**
+- [x] kube-bench CIS 1.8 — Job depuis Harbor — **36 PASS / 36 FAIL / 58 WARN** ✅
+- [x] Prowler CIS 1.10 — Job depuis Harbor — **2887 PASS (91.56%) / 266 FAIL** ✅
+- [x] Rapports HTML/JSON sauvegardés
+
+**Grafana + Prometheus OKD**
+- [x] Grafana instance v12.4.1 depuis Harbor — Route `grafana.apps.sno.okd.lab` ✅
+- [x] Token Prometheus → Vault → ESO → Secret K8s (pattern Zero Trust)
+- [x] GrafanaDatasource Prometheus OKD — `status: success` ✅
+- [x] Dashboard "OKD SNO — Security Compliance" — CPU/Memory/kube-bench/Prowler ✅
+
+**ArgoCD final**
+```
+eso              Synced   Healthy  ✅
+grafana          Synced   Healthy  ✅
+grafana-instance Synced   Healthy  ✅
+keycloak         Synced   Healthy  ✅
+keycloak-secrets Synced   Healthy  ✅
+loki             Synced   Healthy  ✅
+root-app         Synced   Healthy  ✅
+vault            Synced   Healthy  ✅
+```
 
 → [Guide Phase 3](docs/phase3-airgap.md)
 
@@ -214,15 +247,27 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 
 ### 🔜 Phase 4 — Security & Compliance
 
-> Kyverno, Falco, Supply Chain, Conformité
+> Kyverno, Falco, Supply Chain, GitLab in-cluster
 
 - [ ] Kyverno — VALIDATE + MUTATE + GENERATE + VERIFY Cosign
 - [ ] NetworkPolicy default-deny auto sur chaque namespace
 - [ ] Falco runtime security rules
 - [ ] Cosign signing pipeline + enforcement Kyverno
+- [ ] GitLab in-cluster (airgap Git total)
+- [ ] GitLab CI/CD pipeline (build → Harbor → OKD)
 - [ ] Comparaison avant/après kube-bench (Phase 3 → Phase 4)
 
-→ [Documentation Phase 4](docs/phase4-security.md)
+---
+
+### 🔜 Phase 5 — HyperShift + Azure NodePools
+
+> Multi-cluster management
+
+- [ ] MCE + HyperShift installés sur SNO (management cluster)
+- [ ] Hosted Control Plane déployé
+- [ ] Azure NodePool (Standard_D4s_v3) connecté via Tailscale
+- [ ] LokiStack sur nœuds dédiés Azure
+- [ ] Observabilité multi-cluster dans Grafana
 
 ---
 
@@ -237,41 +282,27 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 │       ├── keycloak.yaml
 │       ├── keycloak-secrets.yaml
 │       ├── vault.yaml
-│       └── eso.yaml
+│       ├── eso.yaml
+│       ├── grafana.yaml
+│       ├── grafana-instance.yaml
+│       └── loki.yaml
 ├── manifests/
 │   ├── argocd/
-│   │   ├── 00-subscription.yaml      # OLM Subscription ArgoCD
-│   │   ├── 01-argocd-instance.yaml
-│   │   └── root-app.yaml             # Bootstrap App of Apps
 │   ├── keycloak/
-│   │   ├── 00-namespace.yaml
-│   │   ├── 00-subscription.yaml      # OLM Subscription Keycloak
-│   │   ├── 01-tls-secret.sh
-│   │   ├── 02-keycloak-instance.yaml
-│   │   ├── 03-client-secret.yaml
-│   │   └── 04-oauth-cluster.yaml     # Manuel (cluster-level)
 │   ├── vault/
-│   │   ├── 00-namespace.yaml
-│   │   ├── values.yaml               # Helm values Vault
-│   │   └── extras/
-│   │       ├── 01-route.yaml         # Route OKD Vault
-│   │       └── 02-auth-delegator.yaml # Manuel (cluster-level)
-│   └── eso/
-│       ├── 00-namespace.yaml
-│       ├── 00-subscription.yaml      # OLM Subscription ESO
-│       ├── 01-operatorconfig.yaml
-│       ├── 01-secret-store.yaml
-│       └── 02-external-secret.yaml
+│   ├── eso/
+│   ├── grafana/                      # Grafana Operator (OLM)
+│   ├── grafana-instance/             # Grafana CR + Datasource + Dashboard
+│   ├── loki/                         # Loki Operator (OLM)
+│   ├── kube-bench/                   # Job CIS benchmark
+│   ├── prowler/                      # Job conformité
+│   └── storage/                      # local-path-provisioner
 ├── scripts/
-│   ├── fix-assisted-db.sh            # Fix PostgreSQL socket OKD 4.15
-│   ├── okd-approve-csr.sh            # Approbation CSR kubelet
-│   └── vault-bootstrap.sh            # Bootstrap Vault après reboot
+│   ├── fix-assisted-db.sh
+│   ├── okd-approve-csr.sh
+│   └── vault-bootstrap.sh
 ├── docs/
 │   ├── adr/
-│   │   ├── adr-001-okd-vs-openshift.md
-│   │   ├── adr-002-fcos-machineconfig.md
-│   │   ├── adr-003-kyverno.md
-│   │   └── adr-004-security-strategy.md
 │   ├── phase1-bootstrap.md
 │   ├── phase1-validation-console.md
 │   ├── harbor-vm.md
@@ -291,16 +322,16 @@ The project covers the full stack required for **enterprise Kubernetes/OpenShift
 ```bash
 # 1. Installer ArgoCD via OLM
 oc apply -f manifests/argocd/00-subscription.yaml
-# Attendre que l'opérateur soit Running (~2 min)
 
 # 2. Démarrer le pattern App of Apps
 oc apply -f manifests/argocd/root-app.yaml
-# ArgoCD déploie automatiquement keycloak, vault, eso
 
 # 3. Labelliser les namespaces
 oc label namespace vault argocd.argoproj.io/managed-by=openshift-operators
 oc label namespace keycloak argocd.argoproj.io/managed-by=openshift-operators
 oc label namespace external-secrets argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace grafana-operator argocd.argoproj.io/managed-by=openshift-operators
+oc label namespace loki-operator argocd.argoproj.io/managed-by=openshift-operators
 
 # 4. Appliquer les ressources cluster-level (une seule fois)
 oc apply -f manifests/keycloak/04-oauth-cluster.yaml
@@ -309,8 +340,9 @@ oc apply -f manifests/vault/extras/02-auth-delegator.yaml
 # 5. Bootstrap Vault
 source .env && ./scripts/vault-bootstrap.sh
 
-# 6. TLS Keycloak (après chaque reboot)
-./manifests/keycloak/01-tls-secret.sh
+# 6. SCC pour kube-bench et Prowler
+oc adm policy add-scc-to-user privileged -z kube-bench -n kube-bench
+oc adm policy add-scc-to-user anyuid -z prowler -n prowler
 ```
 
 ---
@@ -345,6 +377,7 @@ source .env && ./scripts/vault-bootstrap.sh
 | Vault | https://vault.apps.sno.okd.lab |
 | Keycloak | https://keycloak.apps.sno.okd.lab |
 | Harbor | https://harbor.okd.lab |
+| Grafana | https://grafana.apps.sno.okd.lab |
 | Prometheus | Console OKD → Observe → Metrics |
 | Alertmanager | Console OKD → Observe → Alerting |
 
@@ -361,6 +394,8 @@ source .env && ./scripts/vault-bootstrap.sh
 | [ADR-002](docs/adr/adr-002-fcos-machineconfig.md) | FCOS Immutable OS + MachineConfig | Accepted |
 | [ADR-003](docs/adr/adr-003-kyverno.md) | Kyverno Policy Engine | Accepted |
 | [ADR-004](docs/adr/adr-004-security-strategy.md) | Stratégie sécurité multi-couches | Accepted |
+| [ADR-005](docs/adr/adr-005-kube-bench-prowler.md) | kube-bench + Prowler Compliance | Accepted |
+| [ADR-006](docs/adr/adr-006-icsp-airgap.md) | ICSP Airgap Strategy | Accepted |
 
 ---
 
@@ -375,9 +410,10 @@ source .env && ./scripts/vault-bootstrap.sh
 | Certificats kubelet expirés après reboot | Cluster éteint > 24h | `scripts/okd-approve-csr.sh` |
 | OAuth CO Degraded : x509 unknown authority | Keycloak self-signed cert | ConfigMap `keycloak-ca` dans `openshift-config` |
 | ArgoCD perd HTTPS_PROXY | Opérateur reconcilie le Deployment | Configurer dans la CR ArgoCD `spec.repo.env` |
-| ESO `OperatorConfig` erreur spec | `spec: {}` requis | Ajouter `spec: {}` explicitement |
-| Vault 403 Kubernetes auth | `authDelegator` désactivé + CA cert manquant | ClusterRoleBinding + CA cert dans bootstrap script |
-| oc-mirror `401 UNAUTHORIZED` | Image inexistante dans additionalImages | Utiliser versions détectées automatiquement par bundle |
+| `OwnNamespace InstallModeType not supported` | Loki Operator mode | OperatorGroup `spec: {}` (AllNamespaces) |
+| `prowler executable not found` | Entrypoint = `poetry run prowler` | `command: ["poetry", "run", "prowler", ...]` |
+| PVCs Pending `no storage class is set` | StorageClass créée après PVCs | Supprimer PVCs + CR, recréer avec `storageClassName` |
+| `Insufficient CPU` LokiStack | SNO lab limité | LokiStack retiré — revisiter avec HyperShift Azure |
 
 ---
 
@@ -385,7 +421,7 @@ source .env && ./scripts/vault-bootstrap.sh
 
 ```
 Infrastructure & OS
-├── OKD UPI deployment (platform: none, Agent-based Installer) ✅
+├── OKD UPI deployment (Agent-based Installer, platform: none) ✅
 ├── FCOS bare-metal provisioning via Ignition ✅
 └── MachineConfig — configuration OS déclarative ✅
 
@@ -398,7 +434,7 @@ GitOps
 Secrets Management
 ├── HashiCorp Vault Kubernetes auth ✅
 ├── External Secrets Operator ✅
-├── SecretStore + ExternalSecret GitOps ✅
+├── Vault policies + roles par namespace ✅
 └── vault-bootstrap.sh reproductible ✅
 
 Identity & SSO
@@ -410,33 +446,39 @@ Container Registry & Supply Chain
 ├── Harbor 2.11 + MinIO S3 backend ✅
 ├── Trivy CVE scan automatique ✅
 ├── Cosign image signing ✅
-└── oc-mirror airgap mirroring 🔄
+└── oc-mirror airgap mirroring ✅
 
 Observabilité
 ├── Prometheus + Alertmanager + Thanos (built-in) ✅
-├── PromQL queries cluster health ✅
-├── Grafana + Loki (airgap install) 🔜
-└── kube-bench + Prowler compliance 🔜
+├── Grafana v12 + GrafanaDatasource + GrafanaDashboard ✅
+├── Token Prometheus via Vault → ESO (Zero Trust) ✅
+└── Dashboard Security Compliance (kube-bench + Prowler) ✅
 
-Sécurité
-├── Défense en profondeur 6 couches (ADR-004) ✅
-├── SCCs OpenShift ✅
-├── Kyverno policy engine 🔜
-└── Falco runtime security 🔜
+Compliance
+├── kube-bench CIS 1.8 — 36P/36F/58W ✅
+├── Prowler CIS 1.10 — 91.56% PASS ✅
+└── Rapports HTML/JSON sauvegardés ✅
 
 Airgap
 ├── oc-mirror ImageSetConfiguration ✅
-├── Harbor okd-mirror project ✅
-├── ICSP + CatalogSource 🔜
-└── Validation cluster sans Internet 🔜
+├── Harbor okd-mirror project (4.62 GiB) ✅
+├── ICSP + CatalogSource Harbor ✅
+├── Airgap progressif (bastion → Harbor → cluster) ✅
+└── local-path-provisioner StorageClass ✅
+
+Sécurité
+├── Défense en profondeur 6 couches (ADR-004) ✅
+├── SCCs OpenShift (privileged, anyuid) ✅
+├── Kyverno policy engine 🔜
+└── Falco runtime security 🔜
 ```
 
 ---
 
 ## 👤 Auteur
 
-**Z3ROX (Stéphane Seloi)** — Cloud Native Security Architect  
-CCSP | AWS Solutions Architect | ISO 27001 Lead Implementer | CompTIA Security+  
+**Z3ROX (Stéphane Seloi)** — Cloud Native Security Architect
+CCSP | AWS Solutions Architect | ISO 27001 Lead Implementer | CompTIA Security+
 [GitHub](https://github.com/Z3ROX-lab)
 
 ---
