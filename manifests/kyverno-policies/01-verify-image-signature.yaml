@@ -26,11 +26,14 @@ spec:
                 - vault
                 - grafana-operator
       verifyImages:
-        - imageReferences:
+        - mutateDigest: false
+          imageReferences:
             - "harbor.okd.lab/okd-mirror/*"
           attestors:
             - entries:
                 - keys:
+                    rekor:
+                      ignoreTlog: true
                     publicKeys: |-
                       -----BEGIN PUBLIC KEY-----
                       MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUGHKMeYuWTAZ8dE5jRBE3rtVrVGW
