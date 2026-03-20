@@ -84,7 +84,7 @@ metadata:
   name: local-path-config
   namespace: local-path-storage
 data:
-  config.json: |-
+  config.json: |
     {
       "nodePathMap": [
         {
