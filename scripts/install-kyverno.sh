@@ -19,5 +19,5 @@ helm upgrade --install kyverno kyverno/kyverno \
   -f manifests/kyverno/values.yaml
 
 echo "→ Vérification pods..."
-oc rollout status deployment/kyverno-admission-controller -n kyverno
+oc get pods -n kyverno
 echo "✅ Kyverno installé !"

@@ -84,3 +84,39 @@ reportsController:
     limits:
       cpu: 200m
       memory: 256Mi
+
+# Cleanup jobs — images depuis Harbor
+cleanupJobs:
+  admissionReports:
+    image:
+      registry: harbor.okd.lab/okd-mirror
+      repository: bitnami/kubectl
+      tag: "1.28.5"
+  clusterAdmissionReports:
+    image:
+      registry: harbor.okd.lab/okd-mirror
+      repository: bitnami/kubectl
+      tag: "1.28.5"
+
+# Désactiver CTLog (airgap — pas accès à sigstore.dev)
+features:
+  logging:
+    verbosity: 2
+  omitEvents:
+    eventTypes: []
+
+config:
+  enableDefaultRegistryMutation: false
+
+# Désactiver Sigstore TUF (airgap)
+global:
+  extraEnvVars:
+    - name: COSIGN_EXPERIMENTAL
+      value: "0"
+    - name: SIGSTORE_NO_UPDATE
+      value: "1"
+
+# Force tous les webhooks en Ignore — requis pour OKD SNO
+# L'API server OKD ne peut pas joindre les pods via OVN-Kubernetes
+forceFailurePolicyIgnore: true
+autoUpdateWebhooks: false

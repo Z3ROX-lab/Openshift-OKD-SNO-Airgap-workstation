@@ -7,9 +7,8 @@ metadata:
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/severity: high
     policies.kyverno.io/description: >-
-      Vérifie que toutes les images déployées depuis Harbor sont
-      signées avec Cosign. Implémente la sécurité supply chain
-      (SLSA Level 2+, NIS2, DORA).
+      Vérifie que toutes les images depuis Harbor sont signées Cosign.
+      Mode airgap — transparency log et SCT désactivés.
 spec:
   validationFailureAction: Audit
   background: true
@@ -26,16 +25,18 @@ spec:
                 - vault
                 - grafana-operator
       verifyImages:
-        - mutateDigest: false
-          imageReferences:
+        - imageReferences:
             - "harbor.okd.lab/okd-mirror/*"
+          mutateDigest: false
           attestors:
             - entries:
                 - keys:
-                    rekor:
-                      ignoreTlog: true
                     publicKeys: |-
                       -----BEGIN PUBLIC KEY-----
                       MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUGHKMeYuWTAZ8dE5jRBE3rtVrVGW
                       orUcSlxVbw/Ww9jdTROmzYau7YgzzeJku1iBCks9XZxkuQnwibLmYWl9EQ==
                       -----END PUBLIC KEY-----
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
