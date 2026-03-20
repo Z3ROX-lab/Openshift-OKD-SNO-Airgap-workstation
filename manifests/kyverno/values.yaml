@@ -1,0 +1,86 @@
+# Kyverno v1.12.0 — values airgap Harbor
+# Toutes les images depuis harbor.okd.lab/okd-mirror
+
+image:
+  registry: harbor.okd.lab/okd-mirror
+  repository: kyverno/kyverno
+  tag: v1.12.0
+
+initImage:
+  registry: harbor.okd.lab/okd-mirror
+  repository: kyverno/kyvernopre
+  tag: v1.12.0
+
+backgroundController:
+  image:
+    registry: harbor.okd.lab/okd-mirror
+    repository: kyverno/background-controller
+    tag: v1.12.0
+
+cleanupController:
+  image:
+    registry: harbor.okd.lab/okd-mirror
+    repository: kyverno/cleanup-controller
+    tag: v1.12.0
+
+reportsController:
+  image:
+    registry: harbor.okd.lab/okd-mirror
+    repository: kyverno/reports-controller
+    tag: v1.12.0
+
+initResources:
+  image:
+    registry: harbor.okd.lab/okd-mirror
+    repository: busybox
+    tag: "1.35"
+
+kubectl:
+  image:
+    registry: harbor.okd.lab/okd-mirror
+    repository: bitnami/kubectl
+    tag: "1.28.5"
+
+# OKD/OpenShift compatibility
+openshift: true
+
+# Réduire les ressources pour SNO lab
+admissionController:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+backgroundController:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+cleanupController:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+reportsController:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi

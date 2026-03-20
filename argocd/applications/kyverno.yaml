@@ -1,0 +1,36 @@
+---
+# =============================================================================
+# kyverno.yaml — ArgoCD Application : Kyverno Policy Engine
+# =============================================================================
+# Kyverno v1.12.0 via Helm — toutes les images depuis Harbor (airgap)
+# openshift: true — compatibilité OKD/OpenShift
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: openshift-operators
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://kyverno.github.io/kyverno/
+      chart: kyverno
+      targetRevision: 3.2.0
+      helm:
+        valueFiles:
+          - $values/manifests/kyverno/values.yaml
+    - repoURL: https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
