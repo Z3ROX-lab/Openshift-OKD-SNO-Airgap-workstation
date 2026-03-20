@@ -1,0 +1,27 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: prometheus-okd
+  namespace: grafana-operator
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  datasource:
+    name: Prometheus OKD
+    type: prometheus
+    access: proxy
+    url: https://prometheus-k8s.openshift-monitoring.svc.cluster.local:9091
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      tlsSkipVerify: true
+      httpHeaderName1: "Authorization"
+    secureJsonData:
+      httpHeaderValue1: "$__file{/etc/grafana-secrets/token}"
+  valuesFrom:
+    - targetPath: secureJsonData.httpHeaderValue1
+      valueFrom:
+        secretKeyRef:
+          name: grafana-prometheus-token
+          key: token
