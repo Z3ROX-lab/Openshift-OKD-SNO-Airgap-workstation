@@ -1,0 +1,38 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signature
+  annotations:
+    policies.kyverno.io/title: Verify Image Signatures
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Vérifie que toutes les images déployées depuis Harbor sont
+      signées avec Cosign. Implémente la sécurité supply chain
+      (SLSA Level 2+, NIS2, DORA).
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: verify-harbor-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - default
+                - keycloak
+                - vault
+                - grafana-operator
+      verifyImages:
+        - imageReferences:
+            - "harbor.okd.lab/okd-mirror/*"
+          attestors:
+            - entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUGHKMeYuWTAZ8dE5jRBE3rtVrVGW
+                      orUcSlxVbw/Ww9jdTROmzYau7YgzzeJku1iBCks9XZxkuQnwibLmYWl9EQ==
+                      -----END PUBLIC KEY-----

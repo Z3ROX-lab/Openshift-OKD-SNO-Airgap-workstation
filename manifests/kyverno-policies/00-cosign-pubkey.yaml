@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cosign-public-key
+  namespace: kyverno
+data:
+  cosign.pub: |
+    -----BEGIN PUBLIC KEY-----
+    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUGHKMeYuWTAZ8dE5jRBE3rtVrVGW
+    orUcSlxVbw/Ww9jdTROmzYau7YgzzeJku1iBCks9XZxkuQnwibLmYWl9EQ==
+    -----END PUBLIC KEY-----
